@@ -27,7 +27,6 @@ struct App {
     input_mode: InputMode,
     /// History of recorded messages
     messages: Vec<String>,
-    messages_length: usize,
     skip: usize,
 }
 
@@ -49,7 +48,6 @@ impl Default for App {
                 String::from("9"),
                 String::from("10"),
             ],
-            messages_length: 0,
             skip: 0,
         }
     }
