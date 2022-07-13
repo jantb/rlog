@@ -27,6 +27,8 @@ struct App {
     input_mode: InputMode,
     /// History of recorded messages
     messages: Vec<String>,
+    messages_length: usize,
+    skip: usize,
 }
 
 impl Default for App {
@@ -35,7 +37,20 @@ impl Default for App {
             input: Vec::new(),
             input_index: 0,
             input_mode: InputMode::Normal,
-            messages: Vec::new(),
+            messages: vec![
+                String::from("1"),
+                String::from("2"),
+                String::from("3"),
+                String::from("4"),
+                String::from("5"),
+                String::from("6"),
+                String::from("7"),
+                String::from("8"),
+                String::from("9"),
+                String::from("10"),
+            ],
+            messages_length: 0,
+            skip: 0,
         }
     }
 }
@@ -77,6 +92,17 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 InputMode::Normal => match key.code {
                     KeyCode::Char('i') => {
                         app.input_mode = InputMode::Editing;
+                    }
+                    KeyCode::Up => {
+                        app.skip += 1;
+                    }
+                    KeyCode::Down => {
+                        if app.skip > 0 {
+                            app.skip -= 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        app.skip -= 0;
                     }
                     KeyCode::Char('q') => {
                         return Ok(());
@@ -137,17 +163,21 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         )
         .split(f.size());
 
-    let messages: Vec<ListItem> = app
+    let mut messages: Vec<ListItem> = app
         .messages
         .iter()
+        .rev()
         .enumerate()
+        .filter(|&x| x.1.len()>0)
+        .skip(app.skip)
         .map(|(i, m)| {
             let content = vec![Spans::from(Span::raw(format!("{}: {}", i, m)))];
             ListItem::new(content)
         })
+        .take(chunks[0].height.into())
         .collect();
-    let messages =
-        List::new(messages).block(Block::default().borders(Borders::NONE));
+        messages.reverse();
+    let messages = List::new(messages).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
     let (msg, style) = match app.input_mode {
@@ -195,7 +225,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 // Put cursor past the end of the input text
                 chunks[2].x + app.input_index as u16,
                 // Move one line down, from the border to the input line
-                chunks[2].y ,
+                chunks[2].y,
             )
         }
     }
