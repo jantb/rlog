@@ -1,22 +1,24 @@
-mod merge;
+use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, time::SystemTime};
+use std::ops::{Add, Sub};
+use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, option::Iter, time::{self, SystemTime, Instant}};
-use std::borrow::Borrow;
-use std::ops::{Add, Sub};
-use std::time::Duration;
+use regex::Regex;
 use tui::{
     backend::{Backend, CrosstermBackend},
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Span, Spans, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame, Terminal,
+    Terminal,
+    text::{Span, Spans, Text}, widgets::{Block, Borders, List, ListItem, Paragraph},
 };
+
+mod merge;
 
 enum InputMode {
     Normal,
@@ -27,6 +29,7 @@ enum InputMode {
 struct App {
     /// Current value of the input box
     input: Vec<char>,
+    filter: Regex,
     input_index: usize,
     /// Current input mode
     input_mode: InputMode,
@@ -62,6 +65,7 @@ impl Default for App {
     fn default() -> App {
         App {
             input: Vec::new(),
+            filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             input_index: 0,
             input_mode: InputMode::Normal,
             messages: Messages::new(),
@@ -70,28 +74,31 @@ impl Default for App {
     }
 }
 
+fn iso8601(st: &SystemTime) -> String {
+    let dt: DateTime<Utc> = st.clone().into();
+    format!("{}", dt.format("%+"))
+    // formats like "2001-07-08T00:34:60.026490+09:30"
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
     let mut app = App::default();
 
-    let x1 = app.messages.map.entry("System".to_string()).or_insert_with(|| VecDeque::new());
-    let arg: &'static String = Box::leak(Box::new("heyOldest".to_string()));
-    x1.push_back(Message { timestamp: SystemTime::now().sub(Duration::from_secs(10)), value:  &arg });
-    let arg1: &'static String = Box::leak(Box::new("hey11".to_string()));
-    x1.push_back(Message { timestamp: SystemTime::now(), value:  &arg1 });
-
-    let x2 = app.messages.map.entry("System2".to_string()).or_insert_with(|| VecDeque::new());
-    let arg: &'static String = Box::leak(Box::new("hey2Oldest".to_string()));
-    x2.push_back(Message { timestamp: SystemTime::now().sub(Duration::from_secs(1)), value:  &arg });
-    let arg1: &'static String = Box::leak(Box::new("hey21".to_string()));
-    x2.push_back(Message { timestamp: SystemTime::now(), value:  &arg1 });
+    for j in 0..10 {
+        for i in 0..1_000_000 {
+            let x1 = app.messages.map.entry(j.to_string()).or_insert_with(|| VecDeque::new());
+            let time = SystemTime::now().sub(Duration::from_secs(10000)).add(Duration::from_secs(i));
+            let arg: &'static String = Box::leak(Box::new(format!("system:{} datapoint: {}", j, i)));
+            x1.push_front(Message { timestamp: time, value: &arg });
+        }
+    }
 
     let res = run_app(&mut terminal, app);
 
@@ -100,7 +107,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 
@@ -139,8 +145,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 },
                 InputMode::Editing => match key.code {
                     KeyCode::Enter => {
-                        // app.messages.push_front(app.input.drain(..).collect());
-                        app.input_index = 0;
+                        let s:String = app.input.iter().collect();
+                        app.filter = Regex::new(format!(r#"{}"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap());
                     }
                     KeyCode::Char(c) => {
                         app.input.insert(app.input_index, c);
@@ -180,7 +186,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .margin(2)
+        .margin(0)
         .constraints(
             [
                 Constraint::Min(1),
@@ -190,19 +196,26 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 .as_ref(),
         )
         .split(f.size());
-
+    let now = Instant::now();
     let mut messages: Vec<ListItem> = app
         .messages
         .iter()
         .enumerate()
         .filter(|&x| x.1.value.len() > 0)
+        .filter(|&x | app.filter.is_match(x.1.value))
         .skip(app.skip)
-        .map(|(i, m)| {
-            let content = vec![Spans::from(Span::raw(format!("{}: {}", i, m.value)))];
+        .map(|(_i, m)| {
+            let content = vec![
+                Spans::from(
+                    vec![Span::styled(format!("{}: ", iso8601(&m.timestamp)), Style::default().fg(Color::Cyan)),
+                         Span::raw(format!("{}", m.value))]), ];
             ListItem::new(content)
         })
         .take(chunks[0].height.into())
         .collect();
+    messages.reverse();
+    let elapsed = now.elapsed();
+
     let messages = List::new(messages).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
@@ -213,7 +226,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to exit, "),
                 Span::styled("i", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to start editing."),
+                Span::raw(" to search "),
+                Span::raw(format!("{:.2?}", elapsed)),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
@@ -221,9 +235,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
             vec![
                 Span::raw("Press "),
                 Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to stop editing, "),
+                Span::raw(" to stop searching using regex, "),
                 Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to record the message"),
+                Span::raw(" to execute the search "),
+                Span::raw(format!("{:.2?}", elapsed)),
             ],
             Style::default(),
         ),

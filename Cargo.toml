@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 tui = { version = "0.18.0", features = ["crossterm"], default-features = false }
 crossterm = "0.24.0"
+chrono = "0.4"
+regex = "1.5"
