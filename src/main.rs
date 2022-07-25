@@ -53,6 +53,17 @@ impl Messages {
         }
         return merge::merging_iterator_from!(x);
     }
+    fn put(&mut self, timestamp: SystemTime, system: &str, message: &str) {
+        let value: &'static String = Box::leak(Box::new(message.to_string()));
+        self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(Message { timestamp, value: &value });
+    }
+    fn len(& self) -> usize {
+        let mut count = 0;
+        for x in self.map.values() {
+           count += x.len()
+        }
+        return count;
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
@@ -92,11 +103,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::default();
 
     for j in 0..10 {
-        for i in 0..1_000_000 {
-            let x1 = app.messages.map.entry(j.to_string()).or_insert_with(|| VecDeque::new());
+        for i in 0..1_000 {
             let time = SystemTime::now().sub(Duration::from_secs(10000)).add(Duration::from_secs(i));
-            let arg: &'static String = Box::leak(Box::new(format!("system:{} datapoint: {}", j, i)));
-            x1.push_front(Message { timestamp: time, value: &arg });
+            app.messages.put(time, j.to_string().as_str(), format!("very long line indeed I wonder if it wraps \nsystem:{} datapoint: {}", j, i).as_str());
         }
     }
 
@@ -145,7 +154,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 },
                 InputMode::Editing => match key.code {
                     KeyCode::Enter => {
-                        let s:String = app.input.iter().collect();
+                        let s: String = app.input.iter().collect();
                         app.filter = Regex::new(format!(r#"{}"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap());
                     }
                     KeyCode::Char(c) => {
@@ -197,13 +206,15 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         )
         .split(f.size());
     let now = Instant::now();
-    let mut messages: Vec<ListItem> = app
+
+    let skip = app
         .messages
         .iter()
         .enumerate()
-        .filter(|&x| x.1.value.len() > 0)
-        .filter(|&x | app.filter.is_match(x.1.value))
-        .skip(app.skip)
+        .filter(|&x| app.filter.is_match(x.1.value))
+        .skip(app.skip);
+
+    let mut messages: Vec<ListItem> = skip
         .map(|(_i, m)| {
             let content = vec![
                 Spans::from(
@@ -228,6 +239,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 Span::styled("i", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to search "),
                 Span::raw(format!("{:.2?}", elapsed)),
+                Span::raw(" "),
+                Span::raw(format!("{}",  app.messages.len())),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
@@ -239,6 +252,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to execute the search "),
                 Span::raw(format!("{:.2?}", elapsed)),
+                Span::raw(" "),
+                Span::raw(format!("{}",  app.messages.len())),
             ],
             Style::default(),
         ),
