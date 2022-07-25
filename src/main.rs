@@ -1,9 +1,14 @@
+mod merge;
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use std::{error::Error, io};
+use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, option::Iter, time::{self, SystemTime, Instant}};
+use std::borrow::Borrow;
+use std::ops::{Add, Sub};
+use std::time::Duration;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
@@ -26,8 +31,31 @@ struct App {
     /// Current input mode
     input_mode: InputMode,
     /// History of recorded messages
-    messages: Vec<String>,
+    messages: Messages,
     skip: usize,
+}
+
+struct Messages {
+    map: HashMap<String, VecDeque<Message>>,
+}
+
+impl Messages {
+    fn new() -> Messages {
+        Messages { map: HashMap::new() }
+    }
+    fn iter(&self) -> Box<dyn Iterator<Item=Message> + '_> {
+        let x: Vec<&VecDeque<Message>> = self.map.values().into_iter().collect::<Vec<_>>();
+        if x.len() == 0 {
+            return Box::new(iter::empty::<Message>());
+        }
+        return merge::merging_iterator_from!(x);
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+struct Message {
+    timestamp: SystemTime,
+    value: &'static String,
 }
 
 impl Default for App {
@@ -36,18 +64,7 @@ impl Default for App {
             input: Vec::new(),
             input_index: 0,
             input_mode: InputMode::Normal,
-            messages: vec![
-                String::from("1"),
-                String::from("2"),
-                String::from("3"),
-                String::from("4"),
-                String::from("5"),
-                String::from("6"),
-                String::from("7"),
-                String::from("8"),
-                String::from("9"),
-                String::from("10"),
-            ],
+            messages: Messages::new(),
             skip: 0,
         }
     }
@@ -62,7 +79,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = App::default();
+    let mut app = App::default();
+
+    let x1 = app.messages.map.entry("System".to_string()).or_insert_with(|| VecDeque::new());
+    let arg: &'static String = Box::leak(Box::new("heyOldest".to_string()));
+    x1.push_back(Message { timestamp: SystemTime::now().sub(Duration::from_secs(10)), value:  &arg });
+    let arg1: &'static String = Box::leak(Box::new("hey11".to_string()));
+    x1.push_back(Message { timestamp: SystemTime::now(), value:  &arg1 });
+
+    let x2 = app.messages.map.entry("System2".to_string()).or_insert_with(|| VecDeque::new());
+    let arg: &'static String = Box::leak(Box::new("hey2Oldest".to_string()));
+    x2.push_back(Message { timestamp: SystemTime::now().sub(Duration::from_secs(1)), value:  &arg });
+    let arg1: &'static String = Box::leak(Box::new("hey21".to_string()));
+    x2.push_back(Message { timestamp: SystemTime::now(), value:  &arg1 });
+
     let res = run_app(&mut terminal, app);
 
     // restore terminal
@@ -109,7 +139,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 },
                 InputMode::Editing => match key.code {
                     KeyCode::Enter => {
-                        app.messages.push(app.input.drain(..).collect());
+                        // app.messages.push_front(app.input.drain(..).collect());
                         app.input_index = 0;
                     }
                     KeyCode::Char(c) => {
@@ -157,24 +187,22 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 Constraint::Length(1),
                 Constraint::Length(1),
             ]
-            .as_ref(),
+                .as_ref(),
         )
         .split(f.size());
 
     let mut messages: Vec<ListItem> = app
         .messages
         .iter()
-        .rev()
         .enumerate()
-        .filter(|&x| x.1.len()>0)
+        .filter(|&x| x.1.value.len() > 0)
         .skip(app.skip)
         .map(|(i, m)| {
-            let content = vec![Spans::from(Span::raw(format!("{}: {}", i, m)))];
+            let content = vec![Spans::from(Span::raw(format!("{}: {}", i, m.value)))];
             ListItem::new(content)
         })
         .take(chunks[0].height.into())
         .collect();
-        messages.reverse();
     let messages = List::new(messages).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
@@ -214,7 +242,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     f.render_widget(input, chunks[2]);
     match app.input_mode {
         InputMode::Normal =>
-            // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
+        // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
             {}
 
         InputMode::Editing => {
