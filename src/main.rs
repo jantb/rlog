@@ -1,7 +1,8 @@
-use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, time::SystemTime};
+use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, time::SystemTime};
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant};
-
+use bytesize::ByteSize;
+use get_size::GetSize;
 use chrono::{DateTime, Utc};
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -15,16 +16,12 @@ use tui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     Terminal,
-    text::{Span, Spans, Text}, widgets::{Block, Borders, List, ListItem, Paragraph},
+    text::{Span, Spans, Text}, widgets::{Block, Borders, Paragraph},
 };
+use tui::layout::Alignment;
 use tui::widgets::Wrap;
 
 mod merge;
-
-enum InputMode {
-    Normal,
-    Editing,
-}
 
 /// App holds the state of the application
 struct App {
@@ -32,20 +29,20 @@ struct App {
     input: Vec<char>,
     filter: Regex,
     input_index: usize,
-    /// Current input mode
-    input_mode: InputMode,
     /// History of recorded messages
     messages: Messages,
     skip: usize,
 }
 
 struct Messages {
+    count: usize,
+    size: u64,
     map: HashMap<String, VecDeque<Message>>,
 }
 
 impl Messages {
     fn new() -> Messages {
-        Messages { map: HashMap::new() }
+        Messages { count: 0, size: 0, map: HashMap::new() }
     }
     fn iter(&self) -> Box<dyn Iterator<Item=Message> + '_> {
         let x: Vec<&VecDeque<Message>> = self.map.values().into_iter().collect::<Vec<_>>();
@@ -54,20 +51,25 @@ impl Messages {
         }
         return merge::merging_iterator_from!(x);
     }
+
     fn put(&mut self, timestamp: SystemTime, system: &str, message: &str) {
+        self.count += 1;
         let value: &'static String = Box::leak(Box::new(message.to_string()));
-        self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(Message { timestamp, value: &value });
+        let m = Message { timestamp, value: &value };
+        self.size += value.get_heap_size() as u64;
+        self.size += mem::size_of_val(&timestamp) as u64;
+        self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
-    fn len(& self) -> usize {
-        let mut count = 0;
-        for x in self.map.values() {
-           count += x.len()
-        }
-        return count;
+
+    fn len(&self) -> usize {
+        return self.count;
+    }
+    fn size(&self) -> u64 {
+        return self.map.get_heap_size() as u64 + self.size;
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, GetSize)]
 struct Message {
     timestamp: SystemTime,
     value: &'static String,
@@ -79,7 +81,6 @@ impl Default for App {
             input: Vec::new(),
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             input_index: 0,
-            input_mode: InputMode::Normal,
             messages: Messages::new(),
             skip: 0,
         }
@@ -132,65 +133,57 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         terminal.draw(|f| ui(f, &app))?;
 
         if let Event::Key(key) = event::read()? {
-            match app.input_mode {
-                InputMode::Normal => match key.code {
-                    KeyCode::Char('i') => {
-                        app.input_mode = InputMode::Editing;
+            match key.code {
+                KeyCode::Up => {
+                    app.skip += 1;
+                }
+                KeyCode::Down => {
+                    if app.skip > 0 {
+                        app.skip -= 1;
                     }
-                    KeyCode::Up => {
-                        app.skip += 1;
+                }
+                KeyCode::Esc => {
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    app.skip -= 0;
+                }
+                KeyCode::Char(c) => {
+                    app.input.insert(app.input_index, c);
+                    app.input_index += 1;
+                    filter(&mut app);
+                }
+                KeyCode::Backspace => {
+                    if app.input_index > 0 {
+                        app.input_index -= 1;
+                        app.input.remove(app.input_index);
+                        filter(&mut app);
                     }
-                    KeyCode::Down => {
-                        if app.skip > 0 {
-                            app.skip -= 1;
-                        }
+                }
+                KeyCode::Left => {
+                    if app.input_index > 0 {
+                        let (x, y) = terminal.get_cursor().unwrap();
+                        terminal.set_cursor(x - 1, y).ok();
+                        app.input_index -= 1
                     }
-                    KeyCode::Enter => {
-                        app.skip -= 0;
-                    }
-                    KeyCode::Char('q') => {
-                        return Ok(());
-                    }
-                    _ => {}
-                },
-                InputMode::Editing => match key.code {
-                    KeyCode::Enter => {
-                        let s: String = app.input.iter().collect();
-                        app.filter = Regex::new(format!(r#"{}"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap());
-                    }
-                    KeyCode::Char(c) => {
-                        app.input.insert(app.input_index, c);
-                        app.input_index += 1;
-                    }
-                    KeyCode::Backspace => {
-                        if app.input_index > 0 {
-                            app.input_index -= 1;
-                            app.input.remove(app.input_index);
-                        }
-                    }
-                    KeyCode::Left => {
-                        if app.input_index > 0 {
-                            let (x, y) = terminal.get_cursor().unwrap();
-                            terminal.set_cursor(x - 1, y).ok();
-                            app.input_index -= 1
-                        }
-                    }
+                }
 
-                    KeyCode::Right => {
-                        if app.input_index < app.input.len() {
-                            let (x, y) = terminal.get_cursor().unwrap();
-                            terminal.set_cursor(x + 1, y).ok();
-                            app.input_index += 1
-                        }
+                KeyCode::Right => {
+                    if app.input_index < app.input.len() {
+                        let (x, y) = terminal.get_cursor().unwrap();
+                        terminal.set_cursor(x + 1, y).ok();
+                        app.input_index += 1
                     }
-                    KeyCode::Esc => {
-                        app.input_mode = InputMode::Normal;
-                    }
-                    _ => {}
-                },
+                }
+                _ => {}
             }
         }
     }
+}
+
+fn filter(app: &mut App) {
+    let s:String = app.input.iter().collect();
+    app.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
 }
 
 fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
@@ -229,62 +222,35 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     messages.reverse();
     let elapsed = now.elapsed();
 
-    let messages = Paragraph::new(messages).wrap(Wrap{trim:false}).block(Block::default().borders(Borders::NONE));
+    let messages = Paragraph::new(messages).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
-    let (msg, style) = match app.input_mode {
-        InputMode::Normal => (
-            vec![
-                Span::raw("Press "),
-                Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to exit, "),
-                Span::styled("i", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to search "),
-                Span::raw(format!("{:.2?}", elapsed)),
-                Span::raw(" "),
-                Span::raw(format!("{}",  app.messages.len())),
-            ],
-            Style::default().add_modifier(Modifier::RAPID_BLINK),
-        ),
-        InputMode::Editing => (
-            vec![
-                Span::raw("Press "),
-                Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to stop searching using regex, "),
-                Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to execute the search "),
-                Span::raw(format!("{:.2?}", elapsed)),
-                Span::raw(" "),
-                Span::raw(format!("{}",  app.messages.len())),
-            ],
-            Style::default(),
-        ),
-    };
+    let (msg, style) = (
+        vec![
+            Span::raw("Press "),
+            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" to quit"),
+            Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{:.2?}──", elapsed),Style::default().fg(Color::Cyan)),
+            Span::styled(match app.skip { 0 => {"Follow mode"}, _ => {""} },Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" total lines {} ", app.messages.len()),Style::default().fg(Color::Cyan)),
+            Span::styled("",Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", ByteSize::b( app.messages.size())),Style::default().fg(Color::Cyan)),
+        ],
+        Style::default());
     let mut text = Text::from(Spans::from(msg));
     text.patch_style(style);
-    let help_message = Paragraph::new(text);
+    let help_message = Paragraph::new(text).alignment(Alignment::Right);
     f.render_widget(help_message, chunks[1]);
     let s: String = app.input.iter().collect();
     let input = Paragraph::new(s.as_ref())
-        .style(match app.input_mode {
-            InputMode::Normal => Style::default(),
-            InputMode::Editing => Style::default().fg(Color::Yellow),
-        })
+        .style(
+            Style::default()
+        )
         .block(Block::default().borders(Borders::NONE));
     f.render_widget(input, chunks[2]);
-    match app.input_mode {
-        InputMode::Normal =>
-        // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
-            {}
-
-        InputMode::Editing => {
-            // Make the cursor visible and ask tui-rs to put it at the specified coordinates after rendering
-            f.set_cursor(
-                // Put cursor past the end of the input text
-                chunks[2].x + app.input_index as u16,
-                // Move one line down, from the border to the input line
-                chunks[2].y,
-            )
-        }
-    }
+    f.set_cursor(
+        chunks[2].x + app.input_index as u16,
+        chunks[2].y,
+    )
 }
