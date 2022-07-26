@@ -55,8 +55,10 @@ impl Messages {
     fn put(&mut self, timestamp: SystemTime, system: &str, message: &str) {
         self.count += 1;
         let value: &'static String = Box::leak(Box::new(message.to_string()));
-        let m = Message { timestamp, value: &value };
+        let system: &'static String = Box::leak(Box::new(system.to_string()));
+        let m = Message { timestamp, value: &value, system, level: "INFO"};
         self.size += value.get_heap_size() as u64;
+        self.size += system.get_heap_size() as u64;
         self.size += mem::size_of_val(&timestamp) as u64;
         self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
@@ -72,6 +74,8 @@ impl Messages {
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, GetSize)]
 struct Message {
     timestamp: SystemTime,
+    system: &'static String,
+    level: &'static str,
     value: &'static String,
 }
 
@@ -182,7 +186,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 }
 
 fn filter(app: &mut App) {
-    let s:String = app.input.iter().collect();
+    let s: String = app.input.iter().collect();
     app.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
 }
 
@@ -211,10 +215,12 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let mut messages: Vec<Spans> = skip
         .map(|(_i, m)| {
             let content =
-
                 Spans::from(
-                    vec![Span::styled(format!("{}: ", iso8601(&m.timestamp)), Style::default().fg(Color::Cyan)),
-                         Span::raw(format!("{}", m.value))]);
+                    vec![
+                        Span::styled(format!("{} ", iso8601(&m.timestamp)), Style::default().fg(Color::Cyan)),
+                        Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("{} ", m.level), Style::default().fg(Color::Green)),
+                        Span::raw(format!("{}", m.value))]);
             content
         })
         .take(chunks[0].height.into())
@@ -231,11 +237,14 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
             Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" to quit"),
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{:.2?}──", elapsed),Style::default().fg(Color::Cyan)),
-            Span::styled(match app.skip { 0 => {"Follow mode"}, _ => {""} },Style::default().fg(Color::Cyan)),
-            Span::styled(format!(" total lines {} ", app.messages.len()),Style::default().fg(Color::Cyan)),
-            Span::styled("",Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{}", ByteSize::b( app.messages.size())),Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{:.2?}──", elapsed), Style::default().fg(Color::Cyan)),
+            Span::styled(match app.skip {
+                0 => { "Follow mode" }
+                _ => { "" }
+            }, Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" total lines {} ", app.messages.len()), Style::default().fg(Color::Cyan)),
+            Span::styled("", Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", ByteSize::b(app.messages.size())), Style::default().fg(Color::Cyan)),
         ],
         Style::default());
     let mut text = Text::from(Spans::from(msg));
