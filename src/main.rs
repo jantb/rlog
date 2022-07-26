@@ -1,5 +1,7 @@
-use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, time::SystemTime};
+use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, thread, time::SystemTime};
 use std::ops::{Add, Sub};
+use std::sync::mpsc;
+use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use get_size::GetSize;
@@ -15,22 +17,27 @@ use tui::{
     backend::{Backend, CrosstermBackend},
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     Terminal,
     text::{Span, Spans, Text}, widgets::{Block, Borders, Paragraph},
 };
-use tui::layout::Alignment;
+use tui::layout::{Alignment, Rect};
 use tui::widgets::Wrap;
 
 mod merge;
 
 /// App holds the state of the application
 struct App {
-    /// Current value of the input box
     input: Vec<char>,
     filter: Regex,
     input_index: usize,
-    /// History of recorded messages
+    messages: Messages,
+    skip: usize,
+    tx: Sender<CommandMessage>,
+}
+
+struct Storage {
+    filter: Regex,
     messages: Messages,
     skip: usize,
 }
@@ -57,7 +64,7 @@ impl Messages {
         self.count += 1;
         let value: &'static String = Box::leak(Box::new(message.to_string()));
         let system: &'static String = Box::leak(Box::new(system.to_string()));
-        let m = Message { timestamp, value: &value, system, level: "INFO"};
+        let m = Message { timestamp, value: &value, system, level: "INFO" };
         self.size += value.get_heap_size() as u64;
         self.size += system.get_heap_size() as u64;
         self.size += mem::size_of_val(&timestamp) as u64;
@@ -80,12 +87,22 @@ struct Message {
     value: &'static String,
 }
 
-impl Default for App {
-    fn default() -> App {
+impl App {
+    fn default(tx :Sender<CommandMessage>) -> App {
         App {
             input: Vec::new(),
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             input_index: 0,
+            messages: Messages::new(),
+            skip: 0,
+            tx
+        }
+    }
+}
+impl Default for Storage {
+    fn default() -> Storage {
+        Storage {
+            filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             messages: Messages::new(),
             skip: 0,
         }
@@ -96,7 +113,10 @@ fn iso8601(st: &SystemTime) -> String {
     let dt: DateTime<Utc> = st.clone().into();
     format!("{}", dt.format("%+"))
 }
-
+enum CommandMessage {
+    FilterRegex(String),
+    Exit
+}
 fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
@@ -105,9 +125,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // create app and run it
-    let mut app = App::default();
+    //Command channel for searching etc
+    let (tx, rx) = mpsc::channel();
+    let sender = tx.clone();
+    let mut app = App::default(tx);
 
+    thread::spawn(move || {
+        let mut storage = Storage::default();
+        loop {
+            let message = rx.recv().unwrap();
+            match message {
+                CommandMessage::FilterRegex(s) => {
+                    storage.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
+                }
+                CommandMessage::Exit => {
+                    break
+                }
+            }
+        }
+    });
     for j in 0..10 {
         for i in 0..1_000 {
             let time = SystemTime::now().sub(Duration::from_secs(10000)).add(Duration::from_secs(i));
@@ -128,7 +164,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Err(err) = res {
         println!("{:?}", err)
     }
-
+    sender.send(CommandMessage::Exit).unwrap();
     Ok(())
 }
 
@@ -190,6 +226,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 
 fn filter(app: &mut App) {
     let s: String = app.input.iter().collect();
+    //app.tx.send(CommandMessage::FilterRegex(s)).unwrap();
     app.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
 }
 
@@ -208,15 +245,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         .split(f.size());
     let now = Instant::now();
 
-    let skip = app
-        .messages
-        .iter()
-        .enumerate()
-        .filter(|&x| app.filter.is_match(x.1.value))
-        .skip(app.skip);
+    let skip = get_messages(app, chunks[0].height.into());
 
-    let mut messages: Vec<Spans> = skip
-        .map(|(_i, m)| {
+    let mut messages: Vec<Spans> = skip.iter()
+        .map(|m| {
             let content =
                 Spans::from(
                     vec![
@@ -225,9 +257,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                         Span::styled(format!("{} ", m.level), Style::default().fg(Color::Green)),
                         Span::raw(format!("{}", m.value))]);
             content
-        })
-        .take(chunks[0].height.into())
-        .collect();
+        }).collect();
     messages.reverse();
     let elapsed = now.elapsed();
 
@@ -236,9 +266,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
 
     let (msg, style) = (
         vec![
-            Span::raw("Press "),
-            Span::styled("Esc", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" to quit"),
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{:.2?}──", elapsed), Style::default().fg(Color::Cyan)),
             Span::styled(match app.skip {
@@ -265,4 +292,16 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         chunks[2].x + app.input_index as u16,
         chunks[2].y,
     )
+}
+
+fn get_messages(app: &App, i: usize) -> Vec<Message> {
+    let skip: Vec<Message> = app
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|&x| app.filter.is_match(x.1.value))
+        .skip(app.skip)
+        .take(i)
+        .map(|(_i, m)| { m }).collect();
+    skip
 }
