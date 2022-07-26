@@ -17,6 +17,7 @@ use tui::{
     Terminal,
     text::{Span, Spans, Text}, widgets::{Block, Borders, List, ListItem, Paragraph},
 };
+use tui::widgets::Wrap;
 
 mod merge;
 
@@ -214,20 +215,21 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         .filter(|&x| app.filter.is_match(x.1.value))
         .skip(app.skip);
 
-    let mut messages: Vec<ListItem> = skip
+    let mut messages: Vec<Spans> = skip
         .map(|(_i, m)| {
-            let content = vec![
+            let content =
+
                 Spans::from(
                     vec![Span::styled(format!("{}: ", iso8601(&m.timestamp)), Style::default().fg(Color::Cyan)),
-                         Span::raw(format!("{}", m.value))]), ];
-            ListItem::new(content)
+                         Span::raw(format!("{}", m.value))]);
+            content
         })
         .take(chunks[0].height.into())
         .collect();
     messages.reverse();
     let elapsed = now.elapsed();
 
-    let messages = List::new(messages).block(Block::default().borders(Borders::NONE));
+    let messages = Paragraph::new(messages).wrap(Wrap{trim:false}).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
     let (msg, style) = match app.input_mode {
