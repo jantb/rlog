@@ -9,6 +9,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use crossterm::event::KeyModifiers;
 use regex::Regex;
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -94,7 +95,6 @@ impl Default for App {
 fn iso8601(st: &SystemTime) -> String {
     let dt: DateTime<Utc> = st.clone().into();
     format!("{}", dt.format("%+"))
-    // formats like "2001-07-08T00:34:60.026490+09:30"
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -153,6 +153,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     app.skip -= 0;
                 }
                 KeyCode::Char(c) => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                        return Ok(());
+                    }
                     app.input.insert(app.input_index, c);
                     app.input_index += 1;
                     filter(&mut app);
