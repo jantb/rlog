@@ -1,12 +1,13 @@
-use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, thread, time::SystemTime};
-use std::ops::{Add, Sub};
+extern crate core;
+
+use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, thread};
+use std::ops::{Add};
 use std::sync::mpsc;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use get_size::GetSize;
 use chrono::{DateTime, Utc};
-use chrono::format::Fixed::TimezoneName;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -31,17 +32,21 @@ mod merge;
 /// App holds the state of the application
 struct App {
     input: Vec<char>,
-    filter: Regex,
     input_index: usize,
-    messages: Messages,
+    messages: Vec<Message>,
     skip: usize,
+    size: u64,
+    length: usize,
+    elapsed: Duration,
     tx: Sender<CommandMessage>,
+    rx_result: Receiver<ResultMessage>,
 }
 
 struct Storage {
     filter: Regex,
     messages: Messages,
     skip: usize,
+    result_size: usize,
 }
 
 struct Messages {
@@ -74,12 +79,6 @@ impl Messages {
         self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
 
-    fn len(&self) -> usize {
-        return self.count;
-    }
-    fn size(&self) -> u64 {
-        return  self.size;
-    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
@@ -91,14 +90,17 @@ struct Message {
 }
 
 impl App {
-    fn default(tx: Sender<CommandMessage>) -> App {
+    fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
             input: Vec::new(),
-            filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             input_index: 0,
-            messages: Messages::new(),
+            messages: Vec::new(),
             skip: 0,
+            length: 0,
+            size: 0,
+            elapsed: Duration::from_micros(0),
             tx,
+            rx_result,
         }
     }
 }
@@ -109,6 +111,7 @@ impl Default for Storage {
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             messages: Messages::new(),
             skip: 0,
+            result_size: 0,
         }
     }
 }
@@ -118,7 +121,16 @@ enum CommandMessage {
     FilterRegex(String),
     InsertJson(String),
     SetSkip(usize),
+    SetResultSize(usize),
     Exit,
+}
+
+
+enum ResultMessage {
+    Messages(Vec<Message>),
+    Elapsed(Duration),
+    Size(u64),
+    Length(usize),
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -131,14 +143,38 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
+    let (tx_result, rx_result) = mpsc::channel();
     let sender = tx.clone();
-    let app = App::default(tx);
+    let app = App::default(tx, rx_result);
 
     thread::spawn(move || {
         let mut storage = Storage::default();
         loop {
-            let message = rx.recv().unwrap();
-            match message {
+            let command_message =
+                match rx.try_recv() {
+                    Ok(message) => {
+                        message
+                    }
+                    Err(error) => {
+                        match error {
+                            TryRecvError::Empty => {
+                                let now = Instant::now();
+                                tx_result.send(ResultMessage::Messages(storage
+                                    .messages
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|&x| storage.filter.is_match(x.1.value))
+                                    .skip(storage.skip)
+                                    .take(storage.result_size)
+                                    .map(|(_i, m)| { m }).collect())).unwrap();
+                                tx_result.send(ResultMessage::Elapsed(now.elapsed())).unwrap();
+                                rx.recv().unwrap()
+                            }
+                            TryRecvError::Disconnected => { panic!("{}", error.to_string()) }
+                        }
+                    }
+                };
+            match command_message {
                 CommandMessage::FilterRegex(s) => {
                     storage.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
                 }
@@ -147,22 +183,35 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 CommandMessage::InsertJson(json) => {
                     let log_entry: LogFormat = serde_json::from_str(json.as_str()).unwrap();
-                    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(),"%Y-%m-%dT%H:%M:%S%z");
+                    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
                     if dt.is_ok() {
-                     storage.messages.put(dt.unwrap().with_timezone(&Utc), &log_entry.application, &log_entry.message, &log_entry.level)
+                        storage.messages.put(dt.unwrap().with_timezone(&Utc), &log_entry.application, &log_entry.message, &log_entry.level);
+                        tx_result.send(ResultMessage::Size(storage.messages.size)).unwrap();
+                        tx_result.send(ResultMessage::Length(storage.messages.count)).unwrap();
                     }
                 }
                 CommandMessage::SetSkip(i) => {
                     storage.skip = i;
                 }
+                CommandMessage::SetResultSize(i) => {
+                    storage.result_size = i;
+                }
             }
         }
     });
-    for j in 0..10 {
-        for i in 0..1_000 {
-            app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-         }
+    for _ in 0..1_000_000 {
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:24+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
     }
+
 
     let res = run_app(&mut terminal, app);
 
@@ -183,8 +232,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
-        terminal.draw(|f| ui(f, &app))?;
-
+        terminal.draw(|f| ui(f, &mut app))?;
+        if !event::poll(Duration::from_millis(100)).unwrap() {
+            continue;
+        }
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Up => {
@@ -241,11 +292,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 }
 
 fn filter(app: &mut App) {
-    let s: String = app.input.iter().collect();
-    app.tx.send(CommandMessage::FilterRegex(s)).unwrap();
+    app.tx.send(CommandMessage::FilterRegex(app.input.iter().collect())).unwrap();
 }
 
-fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
+fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(0)
@@ -258,11 +308,25 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
                 .as_ref(),
         )
         .split(f.size());
-    let now = Instant::now();
+    app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
+    while let Ok(result_message) = app.rx_result.try_recv() {
+        match result_message {
+            ResultMessage::Messages(messages) => {
+                app.messages = messages;
+            }
+            ResultMessage::Elapsed(elapsed) => {
+                app.elapsed = elapsed;
+            }
+            ResultMessage::Size(size) => {
+                app.size = size
+            }
+            ResultMessage::Length(length) => {
+                app.length = length
+            }
+        }
+    }
 
-    let skip = get_messages(app, chunks[0].height.into());
-
-    let mut messages: Vec<Spans> = skip.iter()
+    let mut messages: Vec<Spans> = app.messages.iter()
         .map(|m| {
             let content =
                 Spans::from(
@@ -274,7 +338,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
             content
         }).collect();
     messages.reverse();
-    let elapsed = now.elapsed();
 
     let messages = Paragraph::new(messages).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
@@ -282,14 +345,14 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let (msg, style) = (
         vec![
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{:.2?}──", elapsed), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{:.2?}──", app.elapsed), Style::default().fg(Color::Cyan)),
             Span::styled(match app.skip {
                 0 => { "Follow mode" }
                 _ => { "" }
             }, Style::default().fg(Color::Cyan)),
-            Span::styled(format!(" total lines {} ", app.messages.len()), Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" total lines {} ", app.length), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{}", ByteSize::b(app.messages.size())), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", ByteSize::b(app.size)), Style::default().fg(Color::Cyan)),
         ],
         Style::default());
     let mut text = Text::from(Spans::from(msg));
@@ -307,18 +370,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
         chunks[2].x + app.input_index as u16,
         chunks[2].y,
     )
-}
-
-fn get_messages(app: &App, i: usize) -> Vec<Message> {
-    let skip: Vec<Message> = app
-        .messages
-        .iter()
-        .enumerate()
-        .filter(|&x| app.filter.is_match(x.1.value))
-        .skip(app.skip)
-        .take(i)
-        .map(|(_i, m)| { m }).collect();
-    skip
 }
 
 //{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}
