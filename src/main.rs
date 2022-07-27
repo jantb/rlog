@@ -6,11 +6,13 @@ use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use get_size::GetSize;
 use chrono::{DateTime, Utc};
+use chrono::format::Fixed::TimezoneName;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
 use regex::Regex;
 use tui::{
@@ -21,7 +23,7 @@ use tui::{
     Terminal,
     text::{Span, Spans, Text}, widgets::{Block, Borders, Paragraph},
 };
-use tui::layout::{Alignment, Rect};
+use tui::layout::{Alignment};
 use tui::widgets::Wrap;
 
 mod merge;
@@ -60,11 +62,12 @@ impl Messages {
         return merge::merging_iterator_from!(x);
     }
 
-    fn put(&mut self, timestamp: SystemTime, system: &str, message: &str) {
+    fn put(&mut self, timestamp: DateTime<Utc>, system: &str, message: &str, level: &str) {
         self.count += 1;
         let value: &'static String = Box::leak(Box::new(message.to_string()));
         let system: &'static String = Box::leak(Box::new(system.to_string()));
-        let m = Message { timestamp, value: &value, system, level: "INFO" };
+        let level: &'static String = Box::leak(Box::new(level.to_string()));
+        let m = Message { timestamp, value: &value, system, level };
         self.size += value.get_heap_size() as u64;
         self.size += system.get_heap_size() as u64;
         self.size += mem::size_of_val(&timestamp) as u64;
@@ -75,30 +78,31 @@ impl Messages {
         return self.count;
     }
     fn size(&self) -> u64 {
-        return self.map.get_heap_size() as u64 + self.size;
+        return  self.size;
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, GetSize)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 struct Message {
-    timestamp: SystemTime,
+    timestamp: DateTime<Utc>,
     system: &'static String,
     level: &'static str,
     value: &'static String,
 }
 
 impl App {
-    fn default(tx :Sender<CommandMessage>) -> App {
+    fn default(tx: Sender<CommandMessage>) -> App {
         App {
             input: Vec::new(),
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             input_index: 0,
             messages: Messages::new(),
             skip: 0,
-            tx
+            tx,
         }
     }
 }
+
 impl Default for Storage {
     fn default() -> Storage {
         Storage {
@@ -109,14 +113,14 @@ impl Default for Storage {
     }
 }
 
-fn iso8601(st: &SystemTime) -> String {
-    let dt: DateTime<Utc> = st.clone().into();
-    format!("{}", dt.format("%+"))
-}
+
 enum CommandMessage {
     FilterRegex(String),
-    Exit
+    InsertJson(String),
+    SetSkip(usize),
+    Exit,
 }
+
 fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
@@ -128,7 +132,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let sender = tx.clone();
-    let mut app = App::default(tx);
+    let app = App::default(tx);
 
     thread::spawn(move || {
         let mut storage = Storage::default();
@@ -139,16 +143,25 @@ fn main() -> Result<(), Box<dyn Error>> {
                     storage.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
                 }
                 CommandMessage::Exit => {
-                    break
+                    break;
+                }
+                CommandMessage::InsertJson(json) => {
+                    let log_entry: LogFormat = serde_json::from_str(json.as_str()).unwrap();
+                    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(),"%Y-%m-%dT%H:%M:%S%z");
+                    if dt.is_ok() {
+                     storage.messages.put(dt.unwrap().with_timezone(&Utc), &log_entry.application, &log_entry.message, &log_entry.level)
+                    }
+                }
+                CommandMessage::SetSkip(i) => {
+                    storage.skip = i;
                 }
             }
         }
     });
     for j in 0..10 {
         for i in 0..1_000 {
-            let time = SystemTime::now().sub(Duration::from_secs(10000)).add(Duration::from_secs(i));
-            app.messages.put(time, j.to_string().as_str(), format!("very long line indeed I wonder if it wraps \nsystem:{} datapoint: {}", j, i).as_str());
-        }
+            app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+         }
     }
 
     let res = run_app(&mut terminal, app);
@@ -176,17 +189,20 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
             match key.code {
                 KeyCode::Up => {
                     app.skip += 1;
+                    app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
                 }
                 KeyCode::Down => {
                     if app.skip > 0 {
                         app.skip -= 1;
+                        app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
                     }
                 }
                 KeyCode::Esc => {
                     return Ok(());
                 }
                 KeyCode::Enter => {
-                    app.skip -= 0;
+                    app.skip = 0;
+                    app.tx.send(CommandMessage::SetSkip(0)).unwrap();
                 }
                 KeyCode::Char(c) => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
@@ -226,8 +242,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 
 fn filter(app: &mut App) {
     let s: String = app.input.iter().collect();
-    //app.tx.send(CommandMessage::FilterRegex(s)).unwrap();
-    app.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
+    app.tx.send(CommandMessage::FilterRegex(s)).unwrap();
 }
 
 fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
@@ -252,7 +267,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &App) {
             let content =
                 Spans::from(
                     vec![
-                        Span::styled(format!("{} ", iso8601(&m.timestamp)), Style::default().fg(Color::Cyan)),
+                        Span::styled(format!("{} ", format!("{}", m.timestamp.format("%+"))), Style::default().fg(Color::Cyan)),
                         Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
                         Span::styled(format!("{} ", m.level), Style::default().fg(Color::Green)),
                         Span::raw(format!("{}", m.value))]);
@@ -304,4 +319,14 @@ fn get_messages(app: &App, i: usize) -> Vec<Message> {
         .take(i)
         .map(|(_i, m)| { m }).collect();
     skip
+}
+
+//{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}
+#[derive(Deserialize, Serialize)]
+struct LogFormat {
+    #[serde(rename = "@timestamp")]
+    timestamp: String,
+    message: String,
+    level: String,
+    application: String,
 }
