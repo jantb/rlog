@@ -3,11 +3,13 @@ extern crate core;
 use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, thread};
 use std::ops::{Add};
 use std::sync::mpsc;
+use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use get_size::GetSize;
 use chrono::{DateTime, Utc};
+
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -74,11 +76,13 @@ impl Messages {
         let level: &'static String = Box::leak(Box::new(level.to_string()));
         let m = Message { timestamp, value: &value, system, level };
         self.size += value.get_heap_size() as u64;
+        self.size += level.get_heap_size() as u64;
         self.size += system.get_heap_size() as u64;
         self.size += mem::size_of_val(&timestamp) as u64;
+        self.size += mem::size_of_val(&m) as u64;
+        self.size += mem::size_of_val(&message) as u64;
         self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
-
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
@@ -207,7 +211,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message sssdsdjsndkjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
     }
@@ -350,7 +354,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 0 => { "Follow mode" }
                 _ => { "" }
             }, Style::default().fg(Color::Cyan)),
-            Span::styled(format!(" total lines {} ", app.length), Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" total lines {} ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{}", ByteSize::b(app.size)), Style::default().fg(Color::Cyan)),
         ],
