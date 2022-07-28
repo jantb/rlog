@@ -1,7 +1,9 @@
 extern crate core;
 
-use std::{collections::{HashMap, VecDeque}, error::Error, io, iter, mem, thread};
+use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
+use std::cmp::Ordering;
 use std::ops::{Add};
+use std::str::FromStr;
 use std::sync::mpsc;
 use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
@@ -73,10 +75,8 @@ impl Messages {
         self.count += 1;
         let value: &'static String = Box::leak(Box::new(message.to_string()));
         let system: &'static String = Box::leak(Box::new(system.to_string()));
-        let level: &'static String = Box::leak(Box::new(level.to_string()));
-        let m = Message { timestamp, value: &value, system, level };
+        let m = Message { timestamp, value: &value, system, level: Level::from_str(level).unwrap() };
         self.size += value.get_heap_size() as u64;
-        self.size += level.get_heap_size() as u64;
         self.size += system.get_heap_size() as u64;
         self.size += mem::size_of_val(&timestamp) as u64;
         self.size += mem::size_of_val(&m) as u64;
@@ -85,12 +85,51 @@ impl Messages {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
 struct Message {
     timestamp: DateTime<Utc>,
     system: &'static String,
-    level: &'static str,
+    level: Level,
     value: &'static String,
+}
+
+impl Ord for Message {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timestamp.cmp(&other.timestamp)
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
+enum Level {
+    INFO,
+    WARN,
+    ERROR,
+    DEBUG,
+}
+
+impl fmt::Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Level::INFO => {write!(f, "INFO")}
+            Level::WARN => {write!(f, "WARN")}
+            Level::ERROR => {write!(f, "ERROR")}
+            Level::DEBUG => {write!(f, "DEBUG")}
+        }
+    }
+}
+
+impl FromStr for Level {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<Level, Self::Err> {
+        match input {
+            "INFO" => Ok(Level::INFO),
+            "WARN" => Ok(Level::WARN),
+            "DEBUG" => Ok(Level::DEBUG),
+            "ERROR" => Ok(Level::ERROR),
+            _ => Err(()),
+        }
+    }
 }
 
 impl App {
@@ -210,10 +249,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:24+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "ERROR", "application": "appname"}"#.to_string())).unwrap();
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message sssdsdjsndkjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "WARN", "application": "appname"}"#.to_string())).unwrap();
+        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#.to_string())).unwrap();
     }
 
 
@@ -337,7 +376,12 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                     vec![
                         Span::styled(format!("{} ", format!("{}", m.timestamp.format("%+"))), Style::default().fg(Color::Cyan)),
                         Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
-                        Span::styled(format!("{} ", m.level), Style::default().fg(Color::Green)),
+                        Span::styled(format!("{} ", m.level), Style::default().fg(match m.level {
+                            Level::INFO => {Color::Green}
+                            Level::WARN => {Color::Magenta}
+                            Level::ERROR => {Color::Red}
+                            Level::DEBUG => {Color::Blue}
+                        })),
                         Span::raw(format!("{}", m.value))]);
             content
         }).collect();
