@@ -1,13 +1,13 @@
 extern crate core;
 
-use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
+use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem};
 use std::cmp::Ordering;
-use std::ops::{Add};
+
 use std::str::FromStr;
 use std::sync::mpsc;
 use num_format::{Locale, ToFormattedString};
-use std::sync::mpsc::{Receiver, Sender, SendError, TryRecvError};
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
 use bytesize::ByteSize;
 use get_size::GetSize;
 use chrono::{DateTime, Utc};
@@ -19,7 +19,7 @@ use crossterm::{
 };
 use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
-use regex::Regex;
+
 use tui::{
     backend::{Backend, CrosstermBackend},
     Frame,
@@ -28,10 +28,13 @@ use tui::{
     Terminal,
     text::{Span, Spans, Text}, widgets::{Block, Borders, Paragraph},
 };
-use tui::layout::{Alignment};
+use tui::layout::Alignment;
 use tui::widgets::Wrap;
+use search_thread::command_message::CommandMessage;
+use search_thread::result_message::ResultMessage;
 
 mod merge;
+mod search_thread;
 
 /// App holds the state of the application
 struct App {
@@ -45,13 +48,6 @@ struct App {
     elapsed: Duration,
     tx: Sender<CommandMessage>,
     rx_result: Receiver<ResultMessage>,
-}
-
-struct Storage {
-    filter: Regex,
-    messages: Messages,
-    skip: usize,
-    result_size: usize,
 }
 
 struct Messages {
@@ -87,7 +83,7 @@ impl Messages {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
-struct Message {
+pub struct Message {
     timestamp: DateTime<Utc>,
     system: &'static String,
     level: Level,
@@ -111,10 +107,10 @@ enum Level {
 impl fmt::Display for Level {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Level::INFO => {write!(f, "INFO")}
-            Level::WARN => {write!(f, "WARN")}
-            Level::ERROR => {write!(f, "ERROR")}
-            Level::DEBUG => {write!(f, "DEBUG")}
+            Level::INFO => { write!(f, "INFO") }
+            Level::WARN => { write!(f, "WARN") }
+            Level::ERROR => { write!(f, "ERROR") }
+            Level::DEBUG => { write!(f, "DEBUG") }
         }
     }
 }
@@ -150,34 +146,6 @@ impl App {
     }
 }
 
-impl Default for Storage {
-    fn default() -> Storage {
-        Storage {
-            filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
-            messages: Messages::new(),
-            skip: 0,
-            result_size: 0,
-        }
-    }
-}
-
-
-enum CommandMessage {
-    FilterRegex(String),
-    InsertJson(String),
-    SetSkip(usize),
-    SetResultSize(usize),
-    Exit,
-}
-
-
-enum ResultMessage {
-    Messages(Vec<Message>),
-    Elapsed(Duration),
-    Size(u64),
-    Length(usize),
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
@@ -191,7 +159,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (tx_result, rx_result) = mpsc::channel();
     let app = App::default(tx, rx_result);
 
-    search_thread(rx, tx_result);
+    search_thread::search_thread(rx, tx_result);
 
     for _ in 0..1_000_000 {
         app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
@@ -223,61 +191,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessage>) {
-    thread::spawn(move || {
-        let mut storage = Storage::default();
-        loop {
-            let command_message =
-                match rx.try_recv() {
-                    Ok(message) => {
-                        message
-                    }
-                    Err(error) => {
-                        match error {
-                            TryRecvError::Empty => {
-                                let now = Instant::now();
-                                tx_result.send(ResultMessage::Messages(storage
-                                    .messages
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|&x| storage.filter.is_match(x.1.value))
-                                    .skip(storage.skip)
-                                    .take(storage.result_size)
-                                    .map(|(_i, m)| { m }).collect())).unwrap();
-                                tx_result.send(ResultMessage::Elapsed(now.elapsed())).unwrap();
-                                rx.recv().unwrap()
-                            }
-                            TryRecvError::Disconnected => { panic!("{}", error.to_string()) }
-                        }
-                    }
-                };
-            match command_message {
-                CommandMessage::FilterRegex(s) => {
-                    storage.filter = Regex::new(format!(r#".*{}.*"#, s).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap())
-                }
-                CommandMessage::Exit => {
-                    break;
-                }
-                CommandMessage::InsertJson(json) => {
-                    let log_entry: LogFormat = serde_json::from_str(json.as_str()).unwrap();
-                    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
-                    if dt.is_ok() {
-                        storage.messages.put(dt.unwrap().with_timezone(&Utc), &log_entry.application, &log_entry.message, &log_entry.level);
-                        tx_result.send(ResultMessage::Size(storage.messages.size)).unwrap();
-                        tx_result.send(ResultMessage::Length(storage.messages.count)).unwrap();
-                    }
-                }
-                CommandMessage::SetSkip(i) => {
-                    storage.skip = i;
-                }
-                CommandMessage::SetResultSize(i) => {
-                    storage.result_size = i;
-                }
-            }
-        }
-    });
-}
-
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
@@ -286,9 +199,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         }
         if let Event::Key(key) = event::read()? {
             match app.mode {
-                Mode::SelectPods => {
-
-                }
+                Mode::SelectPods => {}
                 Mode::Search => {
                     match key.code {
                         KeyCode::Up => {
@@ -340,7 +251,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     }
                 }
             }
-
         }
     }
 }
@@ -348,10 +258,12 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 fn filter(app: &mut App) {
     app.tx.send(CommandMessage::FilterRegex(app.input.iter().collect())).unwrap();
 }
+
 enum Mode {
-   SelectPods,
-   Search
+    SelectPods,
+    Search,
 }
+
 fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -391,10 +303,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                         Span::styled(format!("{} ", format!("{}", m.timestamp.format("%+"))), Style::default().fg(Color::Cyan)),
                         Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
                         Span::styled(format!("{} ", m.level), Style::default().fg(match m.level {
-                            Level::INFO => {Color::Green}
-                            Level::WARN => {Color::Magenta}
-                            Level::ERROR => {Color::Red}
-                            Level::DEBUG => {Color::Blue}
+                            Level::INFO => { Color::Green }
+                            Level::WARN => { Color::Magenta }
+                            Level::ERROR => { Color::Red }
+                            Level::DEBUG => { Color::Blue }
                         })),
                         Span::raw(format!("{}", m.value))]);
             content
