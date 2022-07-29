@@ -36,6 +36,7 @@ mod merge;
 /// App holds the state of the application
 struct App {
     input: Vec<char>,
+    mode: Mode,
     input_index: usize,
     messages: Vec<Message>,
     skip: usize,
@@ -135,6 +136,7 @@ impl FromStr for Level {
 impl App {
     fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
+            mode: Mode::Search,
             input: Vec::new(),
             input_index: 0,
             messages: Vec::new(),
@@ -285,56 +287,62 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
             continue;
         }
         if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Up => {
-                    app.skip += 1;
-                    app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
-                }
-                KeyCode::Down => {
-                    if app.skip > 0 {
-                        app.skip -= 1;
-                        app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
-                    }
-                }
-                KeyCode::Esc => {
-                    return Ok(());
-                }
-                KeyCode::Enter => {
-                    app.skip = 0;
-                    app.tx.send(CommandMessage::SetSkip(0)).unwrap();
-                }
-                KeyCode::Char(c) => {
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                        return Ok(());
-                    }
-                    app.input.insert(app.input_index, c);
-                    app.input_index += 1;
-                    filter(&mut app);
-                }
-                KeyCode::Backspace => {
-                    if app.input_index > 0 {
-                        app.input_index -= 1;
-                        app.input.remove(app.input_index);
-                        filter(&mut app);
-                    }
-                }
-                KeyCode::Left => {
-                    if app.input_index > 0 {
-                        let (x, y) = terminal.get_cursor().unwrap();
-                        terminal.set_cursor(x - 1, y).ok();
-                        app.input_index -= 1
-                    }
-                }
+            match app.mode {
+                Mode::SelectPods => {}
+                Mode::Search => {
+                    match key.code {
+                        KeyCode::Up => {
+                            app.skip += 1;
+                            app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                        }
+                        KeyCode::Down => {
+                            if app.skip > 0 {
+                                app.skip -= 1;
+                                app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                            }
+                        }
+                        KeyCode::Esc => {
+                            return Ok(());
+                        }
+                        KeyCode::Enter => {
+                            app.skip = 0;
+                            app.tx.send(CommandMessage::SetSkip(0)).unwrap();
+                        }
+                        KeyCode::Char(c) => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                return Ok(());
+                            }
+                            app.input.insert(app.input_index, c);
+                            app.input_index += 1;
+                            filter(&mut app);
+                        }
+                        KeyCode::Backspace => {
+                            if app.input_index > 0 {
+                                app.input_index -= 1;
+                                app.input.remove(app.input_index);
+                                filter(&mut app);
+                            }
+                        }
+                        KeyCode::Left => {
+                            if app.input_index > 0 {
+                                let (x, y) = terminal.get_cursor().unwrap();
+                                terminal.set_cursor(x - 1, y).ok();
+                                app.input_index -= 1
+                            }
+                        }
 
-                KeyCode::Right => {
-                    if app.input_index < app.input.len() {
-                        let (x, y) = terminal.get_cursor().unwrap();
-                        terminal.set_cursor(x + 1, y).ok();
-                        app.input_index += 1
+                        KeyCode::Right => {
+                            if app.input_index < app.input.len() {
+                                let (x, y) = terminal.get_cursor().unwrap();
+                                terminal.set_cursor(x + 1, y).ok();
+                                app.input_index += 1
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
+
         }
     }
 }
@@ -342,7 +350,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 fn filter(app: &mut App) {
     app.tx.send(CommandMessage::FilterRegex(app.input.iter().collect())).unwrap();
 }
-
+enum Mode {
+   SelectPods,
+   Search
+}
 fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
