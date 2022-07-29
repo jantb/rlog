@@ -6,7 +6,7 @@ use std::ops::{Add};
 use std::str::FromStr;
 use std::sync::mpsc;
 use num_format::{Locale, ToFormattedString};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, SendError, TryRecvError};
 use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use get_size::GetSize;
@@ -189,7 +189,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
-    let sender = tx.clone();
     let app = App::default(tx, rx_result);
 
     search_thread(rx, tx_result);
@@ -221,7 +220,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Err(err) = res {
         println!("{:?}", err)
     }
-    sender.send(CommandMessage::Exit).unwrap();
     Ok(())
 }
 
@@ -288,7 +286,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         }
         if let Event::Key(key) = event::read()? {
             match app.mode {
-                Mode::SelectPods => {}
+                Mode::SelectPods => {
+
+                }
                 Mode::Search => {
                     match key.code {
                         KeyCode::Up => {
@@ -301,15 +301,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
                             }
                         }
-                        KeyCode::Esc => {
-                            return Ok(());
-                        }
                         KeyCode::Enter => {
                             app.skip = 0;
                             app.tx.send(CommandMessage::SetSkip(0)).unwrap();
                         }
                         KeyCode::Char(c) => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
                             }
                             app.input.insert(app.input_index, c);
