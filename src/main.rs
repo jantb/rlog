@@ -1,7 +1,8 @@
 extern crate core;
 
-use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem};
+use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
 use std::cmp::Ordering;
+use std::ops::Add;
 
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -46,6 +47,7 @@ struct App {
     size: u64,
     length: usize,
     elapsed: Duration,
+    window_size: u16,
     tx: Sender<CommandMessage>,
     rx_result: Receiver<ResultMessage>,
 }
@@ -68,17 +70,14 @@ impl Messages {
         return merge::merging_iterator_from!(x);
     }
 
-    fn put(&mut self, timestamp: DateTime<Utc>, system: &str, message: &str, level: &str) {
+    fn put(&mut self, m: Message) {
         self.count += 1;
-        let value: &'static String = Box::leak(Box::new(message.to_string()));
-        let system: &'static String = Box::leak(Box::new(system.to_string()));
-        let m = Message { timestamp, value: &value, system, level: Level::from_str(level).unwrap() };
-        self.size += value.get_heap_size() as u64;
-        self.size += system.get_heap_size() as u64;
-        self.size += mem::size_of_val(&timestamp) as u64;
+        self.size += m.value.get_heap_size() as u64;
+        self.size += m.system.get_heap_size() as u64;
+        self.size += mem::size_of_val(&m.timestamp) as u64;
         self.size += mem::size_of_val(&m) as u64;
-        self.size += mem::size_of_val(&message) as u64;
-        self.map.entry(system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
+        self.size += mem::size_of_val(&m.value) as u64;
+        self.map.entry(m.system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
 }
 
@@ -140,6 +139,7 @@ impl App {
             length: 0,
             size: 0,
             elapsed: Duration::from_micros(0),
+            window_size: 0,
             tx,
             rx_result,
         }
@@ -157,24 +157,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
+    let sender = tx.clone();
     let app = App::default(tx, rx_result);
 
     search_thread::search_thread(rx, tx_result);
-
-    for _ in 0..1_000_000 {
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:24+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "ERROR", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message sssdsdjsndkjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "WARN", "application": "appname"}"#.to_string())).unwrap();
-        app.tx.send(CommandMessage::InsertJson(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#.to_string())).unwrap();
-    }
-
-
+    thread::spawn(move || {
+        for _ in 0..1_000_000 {
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:24+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "ERROR", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message sssdsdjsndkjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "WARN", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#, &sender);
+        }
+    });
     let res = run_app(&mut terminal, app);
 
     // restore terminal
@@ -191,10 +191,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
+    let log_entry: LogFormat = serde_json::from_str(x.to_string().as_str()).unwrap();
+    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
+    if dt.is_ok() {
+        let time = dt.unwrap().with_timezone(&Utc);
+        let m = Message {
+            timestamp: time,
+            value: Box::leak(Box::new(log_entry.message)),
+            system: Box::leak(Box::new(log_entry.application)),
+            level: Level::from_str(&log_entry.level).unwrap(),
+        };
+        sender.send(CommandMessage::InsertJson(m)).unwrap();
+    }
+}
+
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
-        if !event::poll(Duration::from_millis(100)).unwrap() {
+        if !event::poll(Duration::from_millis(10)).unwrap() {
             continue;
         }
         if let Event::Key(key) = event::read()? {
@@ -277,7 +292,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 .as_ref(),
         )
         .split(f.size());
-    app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
+    if app.window_size != chunks[0].height {
+        app.window_size = chunks[0].height;
+        app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
+    }
     while let Ok(result_message) = app.rx_result.try_recv() {
         match result_message {
             ResultMessage::Messages(messages) => {

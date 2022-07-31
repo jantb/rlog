@@ -1,6 +1,8 @@
+use crate::Message;
+
 pub enum CommandMessage {
     FilterRegex(String),
-    InsertJson(String),
+    InsertJson(Message),
     SetSkip(usize),
     SetResultSize(usize),
     Exit,

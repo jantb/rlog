@@ -2,9 +2,8 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Instant;
 use regex::Regex;
-use chrono::{DateTime, Utc};
-use std::ops::Add;
-use crate::{LogFormat, Messages};
+use chrono::{Utc};
+use crate::{Messages};
 use command_message::CommandMessage;
 use result_message::ResultMessage;
 
@@ -64,14 +63,10 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                 CommandMessage::Exit => {
                     break;
                 }
-                CommandMessage::InsertJson(json) => {
-                    let log_entry: LogFormat = serde_json::from_str(json.as_str()).unwrap();
-                    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
-                    if dt.is_ok() {
-                        storage.messages.put(dt.unwrap().with_timezone(&Utc), &log_entry.application, &log_entry.message, &log_entry.level);
-                        tx_result.send(ResultMessage::Size(storage.messages.size)).unwrap();
-                        tx_result.send(ResultMessage::Length(storage.messages.count)).unwrap();
-                    }
+                CommandMessage::InsertJson(message) => {
+                    storage.messages.put(message);
+                    tx_result.send(ResultMessage::Size(storage.messages.size)).unwrap();
+                    tx_result.send(ResultMessage::Length(storage.messages.count)).unwrap();
                 }
                 CommandMessage::SetSkip(i) => {
                     storage.skip = i;
