@@ -44,13 +44,3 @@ impl<L, R> Iterator for MergeAscending<L, R>
         }
     }
 }
-macro_rules! merging_iterator_from {  
-    ($vv: ident) => {{    
-        let mut ma: Box<dyn Iterator<Item=_>> = Box::new($vv[0].iter().map(|&i|i));
-        for v in $vv.iter().skip(1) {
-            ma = Box::new(merge::MergeAscending::new(ma, v.iter().map(|&i|i)));
-        };
-        ma
-    }}
-}
-pub(crate) use merging_iterator_from; 

@@ -2,7 +2,6 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Instant;
 use regex::Regex;
-use chrono::{Utc};
 use crate::{Messages};
 use command_message::CommandMessage;
 use result_message::ResultMessage;
@@ -41,14 +40,15 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                         match error {
                             TryRecvError::Empty => {
                                 let now = Instant::now();
-                                tx_result.send(ResultMessage::Messages(storage
+                                let vec = storage
                                     .messages
                                     .iter()
                                     .enumerate()
-                                    .filter(|&x| storage.filter.is_match(x.1.value))
+                                    .filter(|x| storage.filter.is_match(x.1.value.as_str()))
                                     .skip(storage.skip)
                                     .take(storage.result_size)
-                                    .map(|(_i, m)| { m }).collect())).unwrap();
+                                    .map(|(_i, m)| { m.clone() }).collect();
+                                tx_result.send(ResultMessage::Messages(vec)).unwrap();
                                 tx_result.send(ResultMessage::Elapsed(now.elapsed())).unwrap();
                                 rx.recv().unwrap()
                             }

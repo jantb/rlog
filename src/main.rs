@@ -62,12 +62,17 @@ impl Messages {
     fn new() -> Messages {
         Messages { count: 0, size: 0, map: HashMap::new() }
     }
-    fn iter(&self) -> Box<dyn Iterator<Item=Message> + '_> {
+    fn iter(&self) -> Box<dyn Iterator<Item=&Message> + '_> {
         let x: Vec<&VecDeque<Message>> = self.map.values().into_iter().collect::<Vec<_>>();
         if x.len() == 0 {
-            return Box::new(iter::empty::<Message>());
+            return Box::new(iter::empty::<&Message>());
         }
-        return merge::merging_iterator_from!(x);
+
+        let mut ma: Box<dyn Iterator<Item=_>> = Box::new(x[0].iter().map(|i| i));
+        for v in x.iter().skip(1) {
+            ma = Box::new(merge::MergeAscending::new(ma, v.iter().map(|i| i)));
+        };
+        return ma;
     }
 
     fn put(&mut self, m: Message) {
@@ -81,12 +86,12 @@ impl Messages {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Clone)]
 pub struct Message {
     timestamp: DateTime<Utc>,
-    system: &'static String,
+    system: String,
     level: Level,
-    value: &'static String,
+    value: String,
 }
 
 impl Ord for Message {
@@ -198,8 +203,8 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
         let time = dt.unwrap().with_timezone(&Utc);
         let m = Message {
             timestamp: time,
-            value: Box::leak(Box::new(log_entry.message)),
-            system: Box::leak(Box::new(log_entry.application)),
+            value: log_entry.message,
+            system: log_entry.application,
             level: Level::from_str(&log_entry.level).unwrap(),
         };
         sender.send(CommandMessage::InsertJson(m)).unwrap();
