@@ -1,10 +1,11 @@
 extern crate core;
 
 use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
-use std::borrow::BorrowMut;
+
 use std::cmp::Ordering;
 use std::collections::HashSet;
-use std::ops::{Add, Deref};
+use std::ops::{Add};
+use std::process::{Command};
 
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -13,6 +14,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use bytesize::ByteSize;
 use chrono::{DateTime, Utc};
+mod pod;
 
 use crossterm::{
     event::{self, Event, KeyCode},
@@ -21,7 +23,7 @@ use crossterm::{
 };
 use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
-use num_format::Locale::se;
+
 
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -139,7 +141,7 @@ impl FromStr for Level {
 impl App {
     fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
-            pods: StatefulList::with_items(vec![Pod { name: "Pod1".to_string()}, Pod { name: "Pod2".to_string() }, Pod { name: "Pod3".to_string() }]),
+            pods: StatefulList::with_items(vec![Pod { name: "Pod1".to_string() }, Pod { name: "Pod2".to_string() }, Pod { name: "Pod3".to_string() }]),
             mode: Search,
             input: Vec::new(),
             input_index: 0,
@@ -167,7 +169,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
     let sender = tx.clone();
-    let app = App::default(tx, rx_result);
+    let mut app = App::default(tx, rx_result);
 
     search_thread::search_thread(rx, tx_result);
     thread::spawn(move || {
@@ -184,8 +186,33 @@ fn main() -> Result<(), Box<dyn Error>> {
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#, &sender);
         }
     });
-    let res = run_app(&mut terminal, app);
 
+    let output = Command::new("oc")
+        .arg("get")
+        .arg("pods")
+        .arg("-o")
+        .arg("json")
+        .output()
+        .expect("ls command failed to start");
+    match output.status.success() {
+        true => {
+            let result: Result<pod::pods::Pods, _> = serde_json::from_str(String::from_utf8_lossy(&output.stdout).to_string().as_str());
+
+            let pods = match result {
+                Ok(l) => { l }
+                Err(err) => {
+                    println!("{}",err.to_string());
+                    return Ok(()); }
+            };
+            app.pods = StatefulList::with_items(pods.items.iter()
+                .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
+        }
+        false => {
+            println!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+
+    let res = run_app(&mut terminal, app);
     // restore terminal
     disable_raw_mode()?;
     execute!(
@@ -201,7 +228,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
-    let log_entry: LogFormat = serde_json::from_str(x.to_string().as_str()).unwrap();
+    let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
+    let log_entry = match result {
+        Ok(l) => { l }
+        Err(_) => { return; }
+    };
     let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
     if dt.is_ok() {
         let time = dt.unwrap().with_timezone(&Utc);
@@ -209,9 +240,15 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
             timestamp: time,
             value: log_entry.message,
             system: log_entry.application,
-            level: Level::from_str(&log_entry.level).unwrap(),
+            level: match Level::from_str(&log_entry.level) {
+                Ok(s) => { s }
+                Err(_) => { return; }
+            },
         };
-        sender.send(CommandMessage::InsertJson(m)).unwrap();
+        match sender.send(CommandMessage::InsertJson(m)) {
+            Ok(_) => {}
+            Err(_) => { return; }
+        };
     }
 }
 
@@ -356,9 +393,9 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 .iter()
                 .enumerate()
                 .map(|i| {
-                    ListItem::new(Spans::from(i.1.name.clone())).style(Style::default().fg(match  app.pods.selected().contains(&i.0){
-                        true => {Color::Red}
-                        false => {Color::White}
+                    ListItem::new(Spans::from(i.1.name.clone())).style(Style::default().fg(match app.pods.selected().contains(&i.0) {
+                        true => { Color::Red }
+                        false => { Color::White }
                     }))
                 })
                 .collect();
@@ -445,6 +482,7 @@ struct LogFormat {
 }
 
 
+#[derive(Deserialize, Serialize)]
 struct Pod {
     name: String,
 }
@@ -493,8 +531,8 @@ impl<Pod> StatefulList<Pod> {
     }
 
 
-    fn selected(& self) -> &HashSet<usize> {
-        return &self.selected
+    fn selected(&self) -> &HashSet<usize> {
+        return &self.selected;
     }
     fn select(&mut self) {
         let x = &self.state.selected().unwrap();

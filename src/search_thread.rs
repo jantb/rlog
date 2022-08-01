@@ -65,8 +65,14 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                 }
                 CommandMessage::InsertJson(message) => {
                     storage.messages.put(message);
-                    tx_result.send(ResultMessage::Size(storage.messages.size)).unwrap();
-                    tx_result.send(ResultMessage::Length(storage.messages.count)).unwrap();
+                    match tx_result.send(ResultMessage::Size(storage.messages.size)) {
+                        Ok(_) => {}
+                        Err(_) => { return; }
+                    };
+                    match tx_result.send(ResultMessage::Length(storage.messages.count)) {
+                        Ok(_) => {}
+                        Err(_) => { return; }
+                    };
                 }
                 CommandMessage::SetSkip(i) => {
                     storage.skip = i;
