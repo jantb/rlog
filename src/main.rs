@@ -77,11 +77,9 @@ impl Messages {
 
     fn put(&mut self, m: Message) {
         self.count += 1;
-        self.size += m.value.get_heap_size() as u64;
-        self.size += m.system.get_heap_size() as u64;
+        self.size += m.value.len() as u64;
+        self.size += m.system.len() as u64;
         self.size += mem::size_of_val(&m.timestamp) as u64;
-        self.size += mem::size_of_val(&m) as u64;
-        self.size += mem::size_of_val(&m.value) as u64;
         self.map.entry(m.system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
     }
 }
@@ -167,7 +165,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     search_thread::search_thread(rx, tx_result);
     thread::spawn(move || {
-        for _ in 0..1_000_000 {
+        for _ in 0..1_000_000{
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#, &sender);
@@ -175,7 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "ERROR", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Message sssdsdjsndkjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#, &sender);
+            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Messnage sssdsdjsndasdasdasdadskjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "WARN", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#, &sender);
         }
@@ -212,12 +210,34 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+        let mut changed = false;
     loop {
-        terminal.draw(|f| ui(f, &mut app))?;
+        while let Ok(result_message) = app.rx_result.try_recv() {
+            changed = true;
+            match result_message {
+                ResultMessage::Messages(messages) => {
+                    app.messages = messages;
+                }
+                ResultMessage::Elapsed(elapsed) => {
+                    app.elapsed = elapsed;
+                }
+                ResultMessage::Size(size) => {
+                    app.size = size
+                }
+                ResultMessage::Length(length) => {
+                    app.length = length
+                }
+            }
+        }
+        if changed {
+            changed = false;
+            terminal.draw(|f| ui(f, &mut app))?;
+        }
         if !event::poll(Duration::from_millis(10)).unwrap() {
             continue;
         }
         if let Event::Key(key) = event::read()? {
+            changed = true;
             match app.mode {
                 Mode::SelectPods => {}
                 Mode::Search => {
@@ -301,22 +321,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
         app.window_size = chunks[0].height;
         app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
     }
-    while let Ok(result_message) = app.rx_result.try_recv() {
-        match result_message {
-            ResultMessage::Messages(messages) => {
-                app.messages = messages;
-            }
-            ResultMessage::Elapsed(elapsed) => {
-                app.elapsed = elapsed;
-            }
-            ResultMessage::Size(size) => {
-                app.size = size
-            }
-            ResultMessage::Length(length) => {
-                app.length = length
-            }
-        }
-    }
+
 
     let mut messages: Vec<Spans> = app.messages.iter()
         .map(|m| {
