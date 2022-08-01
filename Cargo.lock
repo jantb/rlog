@@ -105,25 +105,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "get-size"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffff7b577402f46b6e0069ae9c31a7859ab3f2abe7ff0fb614fe6441a1d6c306"
-dependencies = [
- "get-size-derive",
-]
-
-[[package]]
-name = "get-size-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "316da74ccd236d0915a5793f3cb37b1154cc41857373d9a7334053294c933f70"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "itoa"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -299,7 +280,6 @@ dependencies = [
  "bytesize",
  "chrono",
  "crossterm 0.24.0",
- "get-size",
  "num-format",
  "regex",
  "serde",

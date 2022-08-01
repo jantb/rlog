@@ -10,7 +10,6 @@ use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use bytesize::ByteSize;
-use get_size::GetSize;
 use chrono::{DateTime, Utc};
 
 use crossterm::{
@@ -165,7 +164,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     search_thread::search_thread(rx, tx_result);
     thread::spawn(move || {
-        for _ in 0..1_000_000{
+        for _ in 0..1_000_000 {
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#, &sender);
             parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#, &sender);
@@ -210,7 +209,7 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
-        let mut changed = false;
+    let mut changed = false;
     loop {
         while let Ok(result_message) = app.rx_result.try_recv() {
             changed = true;
