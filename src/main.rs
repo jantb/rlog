@@ -1,8 +1,10 @@
 extern crate core;
 
 use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
+use std::borrow::BorrowMut;
 use std::cmp::Ordering;
-use std::ops::Add;
+use std::collections::HashSet;
+use std::ops::{Add, Deref};
 
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -19,6 +21,7 @@ use crossterm::{
 };
 use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
+use num_format::Locale::se;
 
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -28,16 +31,19 @@ use tui::{
     Terminal,
     text::{Span, Spans, Text}, widgets::{Block, Borders, Paragraph},
 };
-use tui::layout::Alignment;
-use tui::widgets::Wrap;
+use tui::layout::{Alignment, Rect};
+use tui::style::Modifier;
+use tui::widgets::{List, ListItem, ListState, Wrap};
 use search_thread::command_message::CommandMessage;
 use search_thread::result_message::ResultMessage;
+use crate::Mode::{Search, SelectPods};
 
 mod merge;
 mod search_thread;
 
 /// App holds the state of the application
 struct App {
+    pods: StatefulList<Pod>,
     input: Vec<char>,
     mode: Mode,
     input_index: usize,
@@ -133,7 +139,8 @@ impl FromStr for Level {
 impl App {
     fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
-            mode: Mode::Search,
+            pods: StatefulList::with_items(vec![Pod { name: "Pod1".to_string()}, Pod { name: "Pod2".to_string() }, Pod { name: "Pod3".to_string() }]),
+            mode: Search,
             input: Vec::new(),
             input_index: 0,
             messages: Vec::new(),
@@ -232,14 +239,31 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
             changed = false;
             terminal.draw(|f| ui(f, &mut app))?;
         }
-        if !event::poll(Duration::from_millis(10)).unwrap() {
+        if !event::poll(Duration::from_millis(8)).unwrap() {
             continue;
         }
         if let Event::Key(key) = event::read()? {
             changed = true;
             match app.mode {
-                Mode::SelectPods => {}
-                Mode::Search => {
+                SelectPods => {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                app.tx.send(CommandMessage::Exit).unwrap();
+                                return Ok(());
+                            }
+                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                app.mode = Search;
+                                continue;
+                            }
+                        }
+                        KeyCode::Down => app.pods.next(),
+                        KeyCode::Up => app.pods.previous(),
+                        KeyCode::Enter => app.pods.select(),
+                        _ => {}
+                    }
+                }
+                Search => {
                     match key.code {
                         KeyCode::Up => {
                             app.skip += 1;
@@ -259,6 +283,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
                                 app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
+                            }
+                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                app.mode = SelectPods;
+                                continue;
                             }
                             app.input.insert(app.input_index, c);
                             app.input_index += 1;
@@ -320,8 +348,41 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
         app.window_size = chunks[0].height;
         app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
     }
+    match app.mode {
+        SelectPods => {
+            let items: Vec<ListItem> = app
+                .pods
+                .items
+                .iter()
+                .enumerate()
+                .map(|i| {
+                    ListItem::new(Spans::from(i.1.name.clone())).style(Style::default().fg(match  app.pods.selected().contains(&i.0){
+                        true => {Color::Red}
+                        false => {Color::White}
+                    }))
+                })
+                .collect();
 
+            // Create a List from all list items and highlight the currently selected one
+            let items = List::new(items)
+                .block(Block::default().borders(Borders::NONE).title("Select pods"))
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::LightGreen)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol("");
 
+            // We can now render the item list
+            f.render_stateful_widget(items, chunks[0], &mut app.pods.state);
+        }
+        Search => {
+            render_search(f, app, chunks)
+        }
+    }
+}
+
+fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>) {
     let mut messages: Vec<Spans> = app.messages.iter()
         .map(|m| {
             let content =
@@ -348,10 +409,10 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{:.2?}──", app.elapsed), Style::default().fg(Color::Cyan)),
             Span::styled(match app.skip {
-                0 => { "Follow mode" }
+                0 => { " Follow mode " }
                 _ => { "" }
             }, Style::default().fg(Color::Cyan)),
-            Span::styled(format!(" total lines {} ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("── total lines {} ── ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{}", ByteSize::b(app.size)), Style::default().fg(Color::Cyan)),
         ],
@@ -381,4 +442,66 @@ struct LogFormat {
     message: String,
     level: String,
     application: String,
+}
+
+
+struct Pod {
+    name: String,
+}
+
+struct StatefulList<Pod> {
+    state: ListState,
+    items: Vec<Pod>,
+    selected: HashSet<usize>,
+}
+
+impl<Pod> StatefulList<Pod> {
+    fn with_items(items: Vec<Pod>) -> StatefulList<Pod> {
+        StatefulList {
+            state: ListState::default(),
+            items,
+            selected: HashSet::new(),
+        }
+    }
+
+    fn next(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    fn previous(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+
+    fn selected(& self) -> &HashSet<usize> {
+        return &self.selected
+    }
+    fn select(&mut self) {
+        let x = &self.state.selected().unwrap();
+        if self.selected.contains(x) {
+            self.selected.remove(x);
+        } else {
+            let _ = self.selected.insert(self.state.selected().unwrap());
+        };
+    }
 }
