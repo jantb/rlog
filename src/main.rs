@@ -279,41 +279,19 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
                             }
+                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'a' {
+                                app.pods.select_all();
+                            }
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
                                 app.mode = Search;
                                 app.stops.clear();
-
-                                let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
                                 let stops: Vec<_> = selected_pods.iter().map(|pod| {
                                     let name = pod.name.clone();
                                     let sender = app.tx.clone();
                                     let please_stop = Arc::new(AtomicBool::new(false));
                                     let should_i_stop = please_stop.clone();
-                                    thread::spawn(move || {
-                                        let stdout = Command::new("oc")
-                                            .stdout(Stdio::piped())
-                                            .arg("logs")
-                                            .arg("-f")
-                                            .arg(name)
-                                            .arg("--since=200h")
-                                            .spawn().expect("Unable to start tool");
-                                        match stdout.stdout {
-                                            None => {}
-                                            Some(l) => {
-                                                let mut reader = BufReader::new(l);
-                                                let mut buf = String::new();
-                                                while !should_i_stop.load(OtherOrdering::SeqCst) {
-                                                    let result = reader.read_line(&mut buf).expect("Unable to read");
-                                                    if result == 0 {
-                                                        thread::sleep(Duration::from_millis(100));
-                                                        continue;
-                                                    }
-                                                    parse_and_send(&buf, &sender);
-                                                    buf.clear()
-                                                }
-                                            }
-                                        }
-                                    });
+                                    spawn_reader_thread(name, sender, should_i_stop);
                                     return please_stop;
                                 }).collect();
                                 app.stops = stops;
@@ -349,7 +327,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                 app.mode = SelectPods;
-                                app.stops.iter().for_each(|s| {s.store(true, OtherOrdering::SeqCst)});
+                                app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
                                 app.tx.send(CommandMessage::Clear).unwrap();
                                 continue;
                             }
@@ -385,6 +363,34 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
             }
         }
     }
+}
+
+fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) {
+    thread::spawn(move || {
+        let stdout = Command::new("oc")
+            .stdout(Stdio::piped())
+            .arg("logs")
+            .arg("-f")
+            .arg("--since=200h")
+            .arg(name)
+            .spawn().expect("Unable to start tool");
+        match stdout.stdout {
+            None => {}
+            Some(l) => {
+                let mut reader = BufReader::new(l);
+                let mut buf = String::new();
+                while !should_i_stop.load(OtherOrdering::SeqCst) {
+                    let result = reader.read_line(&mut buf).expect("Unable to read");
+                    if result == 0 {
+                        thread::sleep(Duration::from_millis(100));
+                        continue;
+                    }
+                    parse_and_send(&buf, &sender);
+                    buf.clear()
+                }
+            }
+        }
+    });
 }
 
 fn filter(app: &mut App) {
@@ -567,5 +573,10 @@ impl<Pod> StatefulList<Pod> {
         } else {
             let _ = self.selected.insert(self.state.selected().unwrap());
         };
+    }
+    fn select_all(&mut self) {
+        self.items.iter().enumerate().for_each(|i|  {
+            let _ = self.selected.insert(i.0);
+        });
     }
 }
