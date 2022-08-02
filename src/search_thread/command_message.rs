@@ -5,5 +5,6 @@ pub enum CommandMessage {
     InsertJson(Message),
     SetSkip(usize),
     SetResultSize(usize),
+    Clear,
     Exit,
 }

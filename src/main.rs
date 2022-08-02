@@ -4,16 +4,19 @@ use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, th
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
 use std::ops::{Add};
-use std::process::{Command};
+use std::process::{Command, Stdio};
 
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering as OtherOrdering};
 use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use bytesize::ByteSize;
 use chrono::{DateTime, Utc};
+
 mod pod;
 
 use crossterm::{
@@ -23,7 +26,6 @@ use crossterm::{
 };
 use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
-
 
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -45,6 +47,7 @@ mod search_thread;
 
 /// App holds the state of the application
 struct App {
+    stops: Vec<Arc<AtomicBool>>,
     pods: StatefulList<Pod>,
     input: Vec<char>,
     mode: Mode,
@@ -141,6 +144,7 @@ impl FromStr for Level {
 impl App {
     fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
+            stops: Vec::new(),
             pods: StatefulList::with_items(vec![Pod { name: "Pod1".to_string() }, Pod { name: "Pod2".to_string() }, Pod { name: "Pod3".to_string() }]),
             mode: Search,
             input: Vec::new(),
@@ -168,24 +172,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
-    let sender = tx.clone();
     let mut app = App::default(tx, rx_result);
 
     search_thread::search_thread(rx, tx_result);
-    thread::spawn(move || {
-        for _ in 0..1_000_000 {
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:21+02", "message": "Message number 999999", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:22+02", "message": "Message number 999991", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:23+02", "message": "Message number 999992", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:24+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:25+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:26+02", "message": "Message number 999993", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:27+02", "message": "Message number 999993", "level": "ERROR", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:28+02", "message": "Messnage sssdsdjsndasdasdasdadskjsndksjndksjndskjndskjndskjndksjndksjndksjndksjndksjndksjndkjsndkjsndkjsdnskd sdjnskdjnskjdnskjdnksj dsdjskdnskndskjndksndksndksjnds skjdnskndksndksjndjksd skdj skjdsknumber 999993", "level": "INFO", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:29+02", "message": "Message number 999993", "level": "WARN", "application": "appname"}"#, &sender);
-            parse_and_send(r#"{"@timestamp": "2022-08-07T04:10:30+02", "message": "Message number 999993", "level": "DEBUG", "application": "appname"}"#, &sender);
-        }
-    });
 
     let output = Command::new("oc")
         .arg("get")
@@ -201,8 +190,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let pods = match result {
                 Ok(l) => { l }
                 Err(err) => {
-                    println!("{}",err.to_string());
-                    return Ok(()); }
+                    println!("{}", err.to_string());
+                    return Ok(());
+                }
             };
             app.pods = StatefulList::with_items(pods.items.iter()
                 .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
@@ -291,6 +281,42 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                 app.mode = Search;
+                                app.stops.clear();
+
+                                let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
+                                let stops: Vec<_> = selected_pods.iter().map(|pod| {
+                                    let name = pod.name.clone();
+                                    let sender = app.tx.clone();
+                                    let please_stop = Arc::new(AtomicBool::new(false));
+                                    let should_i_stop = please_stop.clone();
+                                    thread::spawn(move || {
+                                        let stdout = Command::new("oc")
+                                            .stdout(Stdio::piped())
+                                            .arg("logs")
+                                            .arg("-f")
+                                            .arg(name)
+                                            .arg("--since=200h")
+                                            .spawn().expect("Unable to start tool");
+                                        match stdout.stdout {
+                                            None => {}
+                                            Some(l) => {
+                                                let mut reader = BufReader::new(l);
+                                                let mut buf = String::new();
+                                                while !should_i_stop.load(OtherOrdering::SeqCst) {
+                                                    let result = reader.read_line(&mut buf).expect("Unable to read");
+                                                    if result == 0 {
+                                                        thread::sleep(Duration::from_millis(100));
+                                                        continue;
+                                                    }
+                                                    parse_and_send(&buf, &sender);
+                                                    buf.clear()
+                                                }
+                                            }
+                                        }
+                                    });
+                                    return please_stop;
+                                }).collect();
+                                app.stops = stops;
                                 continue;
                             }
                         }
@@ -323,6 +349,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                 app.mode = SelectPods;
+                                app.stops.iter().for_each(|s| {s.store(true, OtherOrdering::SeqCst)});
+                                app.tx.send(CommandMessage::Clear).unwrap();
                                 continue;
                             }
                             app.input.insert(app.input_index, c);
@@ -400,7 +428,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 })
                 .collect();
 
-            // Create a List from all list items and highlight the currently selected one
             let items = List::new(items)
                 .block(Block::default().borders(Borders::NONE).title("Select pods"))
                 .highlight_style(
@@ -410,7 +437,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 )
                 .highlight_symbol("");
 
-            // We can now render the item list
             f.render_stateful_widget(items, chunks[0], &mut app.pods.state);
         }
         Search => {
@@ -481,7 +507,6 @@ struct LogFormat {
     application: String,
 }
 
-
 #[derive(Deserialize, Serialize)]
 struct Pod {
     name: String,
@@ -534,6 +559,7 @@ impl<Pod> StatefulList<Pod> {
     fn selected(&self) -> &HashSet<usize> {
         return &self.selected;
     }
+
     fn select(&mut self) {
         let x = &self.state.selected().unwrap();
         if self.selected.contains(x) {

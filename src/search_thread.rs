@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::Instant;
@@ -79,6 +80,19 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                 }
                 CommandMessage::SetResultSize(i) => {
                     storage.result_size = i;
+                }
+                CommandMessage::Clear => {
+                    storage.messages.map = HashMap::new();
+                    storage.messages.count = 0;
+                    storage.messages.size = 0;
+                    match tx_result.send(ResultMessage::Size(storage.messages.size)) {
+                        Ok(_) => {}
+                        Err(_) => { return; }
+                    };
+                    match tx_result.send(ResultMessage::Length(storage.messages.count)) {
+                        Ok(_) => {}
+                        Err(_) => { return; }
+                    };
                 }
             }
         }
