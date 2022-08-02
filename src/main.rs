@@ -221,14 +221,16 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
     let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
     let log_entry = match result {
         Ok(l) => { l }
-        Err(_) => { return; }
+        Err(_) => {
+            //println!("{}", e.to_string());
+            return; }
     };
     let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
     if dt.is_ok() {
         let time = dt.unwrap().with_timezone(&Utc);
         let m = Message {
             timestamp: time,
-            value: log_entry.message,
+            value: format!("{} {}", log_entry.message, log_entry.stack),
             system: log_entry.application,
             level: match Level::from_str(&log_entry.level) {
                 Ok(s) => { s }
@@ -508,6 +510,8 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
 struct LogFormat {
     #[serde(rename = "@timestamp")]
     timestamp: String,
+    #[serde(default)]
+    stack: String,
     message: String,
     level: String,
     application: String,

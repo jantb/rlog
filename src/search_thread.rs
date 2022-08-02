@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::thread;
+use std::{thread};
 use std::time::Instant;
 use regex::Regex;
 use crate::{Messages};
@@ -66,6 +66,7 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                 }
                 CommandMessage::InsertJson(message) => {
                     storage.messages.put(message);
+
                     match tx_result.send(ResultMessage::Size(storage.messages.size)) {
                         Ok(_) => {}
                         Err(_) => { return; }
