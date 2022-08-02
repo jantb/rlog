@@ -235,8 +235,8 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
     let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
     let log_entry = match result {
         Ok(l) => { l }
-        Err(e) => {
-            println!("{}", e.to_string());
+        Err(_) => {
+         //  println!("{}", e.to_string());
             return;
         }
     };
