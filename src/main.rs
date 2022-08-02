@@ -16,7 +16,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::spawn;
 use std::time::Duration;
 use bytesize::ByteSize;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, ParseResult, Utc};
 
 mod pod;
 
@@ -241,23 +241,28 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
             return;
         }
     };
-    let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
-    if dt.is_ok() {
-        let time = dt.unwrap().with_timezone(&Utc);
-        let m = Message {
-            timestamp: time,
-            value: format!("{} {}", log_entry.message, log_entry.stack),
-            system: log_entry.application,
-            level: match Level::from_str(&log_entry.level) {
-                Ok(s) => { s }
-                Err(_) => { return; }
-            },
-        };
-        match sender.send(CommandMessage::InsertJson(m)) {
-            Ok(_) => {}
-            Err(_) => { return; }
-        };
-    }
+    let dt = DateTime::parse_from_rfc3339(log_entry.timestamp.as_str());
+   match dt {
+       Ok(time) => {
+           let time = time.with_timezone(&Utc);
+           let m = Message {
+               timestamp: time,
+               value: format!("{} {}", log_entry.message, log_entry.stack),
+               system: log_entry.application,
+               level: match Level::from_str(&log_entry.level) {
+                   Ok(s) => { s }
+                   Err(_) => { return; }
+               },
+           };
+           match sender.send(CommandMessage::InsertJson(m)) {
+               Ok(_) => {}
+               Err(_) => { return; }
+           };
+       }
+       Err(e) => {
+           println!("{}", e);
+       }
+   }
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
