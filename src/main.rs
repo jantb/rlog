@@ -87,6 +87,20 @@ impl Messages {
     }
 
     fn put(&mut self, m: Message) {
+        if self.size > 100_000_000 {
+            self.map.values_mut().for_each(|v| {
+                match v.pop_back() {
+                    None => {}
+                    Some(m) => {
+                        self.size -= m.value.len() as u64;
+                        self.size -= m.system.len() as u64;
+                        self.size -= mem::size_of_val(&m.timestamp) as u64;
+                        self.count -= 1;
+                    }
+                };
+            });
+            self.map.shrink_to_fit();
+        }
         self.count += 1;
         self.size += m.value.len() as u64;
         self.size += m.system.len() as u64;
@@ -470,7 +484,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             if m.value.contains("\n") {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 content.push(Span::raw(n.get(0).unwrap().to_string()));
-            }else{
+            } else {
                 content.push(Span::raw(&m.value));
             }
             let mut text = Text::from(Spans::from(content));
@@ -585,9 +599,12 @@ impl<Pod> StatefulList<Pod> {
     }
 
     fn select(&mut self) {
-        let x = &self.state.selected().unwrap();
-        if self.selected.contains(x) {
-            self.selected.remove(x);
+        let x = match self.state.selected() {
+            None => {return;}
+            Some(i) => {i}
+        };
+        if self.selected.contains(&x) {
+            self.selected.remove(&x);
         } else {
             let _ = self.selected.insert(self.state.selected().unwrap());
         };
