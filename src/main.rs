@@ -13,6 +13,7 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering as OtherOrdering};
 use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender};
+use std::thread::spawn;
 use std::time::Duration;
 use bytesize::ByteSize;
 use chrono::{DateTime, Utc};
@@ -221,9 +222,10 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
     let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
     let log_entry = match result {
         Ok(l) => { l }
-        Err(_) => {
-            //println!("{}", e.to_string());
-            return; }
+        Err(e) => {
+            println!("{}", e.to_string());
+            return;
+        }
     };
     let dt = DateTime::parse_from_str(log_entry.timestamp.add("00").as_str(), "%Y-%m-%dT%H:%M:%S%z");
     if dt.is_ok() {
@@ -368,7 +370,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 }
 
 fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) {
-    thread::spawn(move || {
+    spawn(move || {
         let stdout = Command::new("oc")
             .stdout(Stdio::piped())
             .arg("logs")
@@ -454,24 +456,36 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
 }
 
 fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>) {
-    let mut messages: Vec<Spans> = app.messages.iter()
+    let mut messages: Vec<_> = app.messages.iter()
         .map(|m| {
-            let content =
-                Spans::from(
-                    vec![
-                        Span::styled(format!("{} ", format!("{}", m.timestamp.format("%+"))), Style::default().fg(Color::Cyan)),
-                        Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
-                        Span::styled(format!("{} ", m.level), Style::default().fg(match m.level {
-                            Level::INFO => { Color::Green }
-                            Level::WARN => { Color::Magenta }
-                            Level::ERROR => { Color::Red }
-                            Level::DEBUG => { Color::Blue }
-                        })),
-                        Span::raw(format!("{}", m.value))]);
-            content
+            let mut content = vec![
+                Span::styled(format!("{} ", format!("{}", m.timestamp.format("%+"))), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{} ", m.system), Style::default().fg(Color::Yellow)),
+                Span::styled(format!("{} ", m.level), Style::default().fg(match m.level {
+                    Level::INFO => { Color::Green }
+                    Level::WARN => { Color::Magenta }
+                    Level::ERROR => { Color::Red }
+                    Level::DEBUG => { Color::Blue }
+                }))];
+            if m.value.contains("\n") {
+                let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
+                content.push(Span::raw(n.get(0).unwrap().to_string()));
+            }else{
+                content.push(Span::raw(&m.value));
+            }
+            let mut text = Text::from(Spans::from(content));
+            if m.value.contains("\n") {
+                let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
+                text.extend(
+                    Text::raw(n.get(1).unwrap().to_string()));
+            }
+            return text;
         }).collect();
     messages.reverse();
-
+    let messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
+        sum.extend(val.clone());
+        sum
+    });
     let messages = Paragraph::new(messages).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
     f.render_widget(messages, chunks[0]);
 
@@ -579,7 +593,7 @@ impl<Pod> StatefulList<Pod> {
         };
     }
     fn select_all(&mut self) {
-        self.items.iter().enumerate().for_each(|i|  {
+        self.items.iter().enumerate().for_each(|i| {
             let _ = self.selected.insert(i.0);
         });
     }
