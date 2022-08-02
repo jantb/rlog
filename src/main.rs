@@ -5,7 +5,6 @@ use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, th
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
-use std::ops::{Add};
 use std::process::{Command, Stdio};
 
 use std::str::FromStr;
@@ -16,7 +15,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::spawn;
 use std::time::Duration;
 use bytesize::ByteSize;
-use chrono::{DateTime, ParseResult, Utc};
+use chrono::{DateTime, Utc};
 
 mod pod;
 
@@ -259,8 +258,8 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
                Err(_) => { return; }
            };
        }
-       Err(e) => {
-           println!("{}", e);
+       Err(_) => {
+        //   println!("{}", e);
        }
    }
 }
