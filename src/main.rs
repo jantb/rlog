@@ -1,32 +1,27 @@
 extern crate core;
 
 use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
-
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-
 use std::str::FromStr;
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering as OtherOrdering};
-use num_format::{Locale, ToFormattedString};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread::spawn;
 use std::time::Duration;
+
 use bytesize::ByteSize;
 use chrono::{DateTime, Utc};
-
-mod pod;
-
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use serde::{Deserialize, Serialize};
 use crossterm::event::KeyModifiers;
-
+use num_format::{Locale, ToFormattedString};
+use serde::{Deserialize, Serialize};
 use tui::{
     backend::{Backend, CrosstermBackend},
     Frame,
@@ -38,9 +33,13 @@ use tui::{
 use tui::layout::{Alignment, Rect};
 use tui::style::Modifier;
 use tui::widgets::{List, ListItem, ListState, Wrap};
+
 use search_thread::command_message::CommandMessage;
 use search_thread::result_message::ResultMessage;
+
 use crate::Mode::{Search, SelectPods};
+
+mod pod;
 
 mod merge;
 mod search_thread;
@@ -246,7 +245,7 @@ fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
            let time = time.with_timezone(&Utc);
            let m = Message {
                timestamp: time,
-               value: format!("{} {}", log_entry.message, log_entry.stack),
+               value: format!("{} {}{}", log_entry.message, log_entry.stack, log_entry.stack_trace),
                system: log_entry.application,
                level: match Level::from_str(&log_entry.level) {
                    Ok(s) => { s }
@@ -544,6 +543,8 @@ struct LogFormat {
     timestamp: String,
     #[serde(default)]
     stack: String,
+    #[serde(default)]
+    stack_trace: String,
     message: String,
     level: String,
     application: String,
