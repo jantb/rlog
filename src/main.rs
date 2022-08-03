@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering as OtherOrdering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::thread::spawn;
+use std::thread::{JoinHandle, spawn};
 use std::time::Duration;
 
 use bytesize::ByteSize;
@@ -297,6 +297,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     match key.code {
                         KeyCode::Char(c) => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
                                 app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
                             }
@@ -312,7 +313,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     let sender = app.tx.clone();
                                     let please_stop = Arc::new(AtomicBool::new(false));
                                     let should_i_stop = please_stop.clone();
-                                    spawn_reader_thread(name, sender, should_i_stop);
+                                    let _ = spawn_reader_thread(name, sender, should_i_stop);
                                     return please_stop;
                                 }).collect();
                                 app.stops = stops;
@@ -386,8 +387,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
     }
 }
 
-fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) {
-    spawn(move || {
+fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) -> JoinHandle<()> {
+    return spawn(move || {
         let stdout = Command::new("oc")
             .stdout(Stdio::piped())
             .arg("logs")
