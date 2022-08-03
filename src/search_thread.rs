@@ -1,14 +1,19 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::{thread};
+use std::thread;
 use std::time::Instant;
+
 use regex::Regex;
-use crate::{Messages};
+
 use command_message::CommandMessage;
 use result_message::ResultMessage;
 
+use crate::search_thread::messages::Messages;
+
 pub mod command_message;
 pub mod result_message;
+mod messages;
+mod merge;
 
 struct Storage {
     filter: Regex,

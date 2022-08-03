@@ -1,19 +1,23 @@
 extern crate core;
 
-use std::{collections::{HashMap, VecDeque}, error::Error, fmt, io, iter, mem, thread};
-use std::cmp::Ordering;
-use std::collections::HashSet;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
-use std::str::FromStr;
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, Ordering as OtherOrdering};
-use std::sync::mpsc::{Receiver, Sender};
-use std::thread::{JoinHandle, spawn};
-use std::time::Duration;
+use std::{
+    collections::HashSet,
+    error::Error,
+    io::{
+        self,
+    },
+    process::Command,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as OtherOrdering},
+        mpsc::{
+            self,
+        },
+    },
+    time::Duration,
+};
 
 use bytesize::ByteSize;
-use chrono::{DateTime, Utc};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -37,142 +41,20 @@ use tui::widgets::{List, ListItem, ListState, Wrap};
 use search_thread::command_message::CommandMessage;
 use search_thread::result_message::ResultMessage;
 
+use crate::app::App;
+use crate::level::Level;
+use crate::message::Message;
 use crate::Mode::{Search, SelectPods};
+use crate::parse_send::parse_and_send;
+use crate::spawn_reader_thread::spawn_reader_thread;
 
 mod pod;
-
-mod merge;
 mod search_thread;
-
-/// App holds the state of the application
-struct App {
-    stops: Vec<Arc<AtomicBool>>,
-    pods: StatefulList<Pod>,
-    input: Vec<char>,
-    mode: Mode,
-    input_index: usize,
-    messages: Vec<Message>,
-    skip: usize,
-    size: u64,
-    length: usize,
-    elapsed: Duration,
-    window_size: u16,
-    tx: Sender<CommandMessage>,
-    rx_result: Receiver<ResultMessage>,
-}
-
-struct Messages {
-    count: usize,
-    size: u64,
-    map: HashMap<String, VecDeque<Message>>,
-}
-
-impl Messages {
-    fn new() -> Messages {
-        Messages { count: 0, size: 0, map: HashMap::new() }
-    }
-    fn iter(&self) -> Box<dyn Iterator<Item=&Message> + '_> {
-        let x: Vec<&VecDeque<Message>> = self.map.values().into_iter().collect::<Vec<_>>();
-        if x.len() == 0 {
-            return Box::new(iter::empty::<&Message>());
-        }
-
-        let mut ma: Box<dyn Iterator<Item=_>> = Box::new(x[0].iter().map(|i| i));
-        for v in x.iter().skip(1) {
-            ma = Box::new(merge::MergeAscending::new(ma, v.iter().map(|i| i)));
-        };
-        return ma;
-    }
-
-    fn put(&mut self, m: Message) {
-        if self.size > 3_000_000_000 {
-            self.map.values_mut().for_each(|v| {
-                match v.pop_back() {
-                    None => {}
-                    Some(m) => {
-                        self.size -= m.value.len() as u64;
-                        self.size -= m.system.len() as u64;
-                        self.size -= mem::size_of_val(&m.timestamp) as u64;
-                        self.count -= 1;
-                    }
-                };
-            });
-            self.map.shrink_to_fit();
-        }
-        self.count += 1;
-        self.size += m.value.len() as u64;
-        self.size += m.system.len() as u64;
-        self.size += mem::size_of_val(&m.timestamp) as u64;
-        self.map.entry(m.system.to_string()).or_insert_with(|| VecDeque::new()).push_front(m);
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Clone)]
-pub struct Message {
-    timestamp: DateTime<Utc>,
-    system: String,
-    level: Level,
-    value: String,
-}
-
-impl Ord for Message {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.timestamp.cmp(&other.timestamp)
-    }
-}
-
-#[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
-enum Level {
-    INFO,
-    WARN,
-    ERROR,
-    DEBUG,
-}
-
-impl fmt::Display for Level {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Level::INFO => { write!(f, "INFO") }
-            Level::WARN => { write!(f, "WARN") }
-            Level::ERROR => { write!(f, "ERROR") }
-            Level::DEBUG => { write!(f, "DEBUG") }
-        }
-    }
-}
-
-impl FromStr for Level {
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<Level, Self::Err> {
-        match input {
-            "INFO" => Ok(Level::INFO),
-            "WARN" => Ok(Level::WARN),
-            "DEBUG" => Ok(Level::DEBUG),
-            "ERROR" => Ok(Level::ERROR),
-            _ => Err(()),
-        }
-    }
-}
-
-impl App {
-    fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
-        App {
-            stops: Vec::new(),
-            pods: StatefulList::with_items(vec![Pod { name: "Pod1".to_string() }, Pod { name: "Pod2".to_string() }, Pod { name: "Pod3".to_string() }]),
-            mode: Search,
-            input: Vec::new(),
-            input_index: 0,
-            messages: Vec::new(),
-            skip: 0,
-            length: 0,
-            size: 0,
-            elapsed: Duration::from_micros(0),
-            window_size: 0,
-            tx,
-            rx_result,
-        }
-    }
-}
+mod app;
+mod message;
+mod parse_send;
+mod spawn_reader_thread;
+mod level;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
@@ -188,32 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::default(tx, rx_result);
 
     search_thread::search_thread(rx, tx_result);
-
-    let output = Command::new("oc")
-        .arg("get")
-        .arg("pods")
-        .arg("-o")
-        .arg("json")
-        .output()
-        .expect("ls command failed to start");
-    match output.status.success() {
-        true => {
-            let result: Result<pod::pods::Pods, _> = serde_json::from_str(String::from_utf8_lossy(&output.stdout).to_string().as_str());
-
-            let pods = match result {
-                Ok(l) => { l }
-                Err(err) => {
-                    println!("{}", err.to_string());
-                    return Ok(());
-                }
-            };
-            app.pods = StatefulList::with_items(pods.items.iter()
-                .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
-        }
-        false => {
-            println!("{}", String::from_utf8_lossy(&output.stderr));
-        }
-    }
+    populate_pods(&mut app);
 
     let res = run_app(&mut terminal, app);
     // restore terminal
@@ -230,37 +87,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
-    let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
-    let log_entry = match result {
-        Ok(l) => { l }
-        Err(_) => {
-         //  println!("{}", e.to_string());
-            return;
+pub fn populate_pods(app: &mut App) {
+    let output = Command::new("oc")
+        .arg("get")
+        .arg("pods")
+        .arg("-o")
+        .arg("json")
+        .output()
+        .expect("ls command failed to start");
+    match output.status.success() {
+        true => {
+            let result: Result<pod::pods::Pods, _> = serde_json::from_str(String::from_utf8_lossy(&output.stdout).to_string().as_str());
+
+            let pods = match result {
+                Ok(l) => { l }
+                Err(err) => {
+                    println!("{}", err.to_string());
+                    return;
+                }
+            };
+            app.pods = StatefulList::with_items(pods.items.iter()
+                .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
         }
-    };
-    let dt = DateTime::parse_from_rfc3339(log_entry.timestamp.as_str());
-   match dt {
-       Ok(time) => {
-           let time = time.with_timezone(&Utc);
-           let m = Message {
-               timestamp: time,
-               value: format!("{} {}{}", log_entry.message, log_entry.stack, log_entry.stack_trace),
-               system: log_entry.application,
-               level: match Level::from_str(&log_entry.level) {
-                   Ok(s) => { s }
-                   Err(_) => { return; }
-               },
-           };
-           match sender.send(CommandMessage::InsertJson(m)) {
-               Ok(_) => {}
-               Err(_) => { return; }
-           };
-       }
-       Err(_) => {
-        //   println!("{}", e);
-       }
-   }
+        false => {
+            println!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
@@ -387,34 +239,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
     }
 }
 
-fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) -> JoinHandle<()> {
-    return spawn(move || {
-        let mut child = Command::new("oc")
-            .stdout(Stdio::piped())
-            .arg("logs")
-            .arg("-f")
-            .arg("--since=200h")
-            .arg(name)
-            .spawn().expect("Unable to start tool");
-        match child.stdout.take() {
-            None => {}
-            Some(l) => {
-                let mut reader = BufReader::new(l);
-                let mut buf = String::new();
-                while !should_i_stop.load(OtherOrdering::SeqCst) {
-                    let result = reader.read_line(&mut buf).expect("Unable to read");
-                    if result == 0 {
-                        thread::sleep(Duration::from_millis(100));
-                        continue;
-                    }
-                    parse_and_send(&buf, &sender);
-                    buf.clear()
-                }
-                child.kill().unwrap()
-            }
-        }
-    });
-}
 
 fn filter(app: &mut App) {
     app.tx.send(CommandMessage::FilterRegex(app.input.iter().collect())).unwrap();
@@ -607,8 +431,8 @@ impl<Pod> StatefulList<Pod> {
 
     fn select(&mut self) {
         let x = match self.state.selected() {
-            None => {return;}
-            Some(i) => {i}
+            None => { return; }
+            Some(i) => { i }
         };
         if self.selected.contains(&x) {
             self.selected.remove(&x);
