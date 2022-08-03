@@ -389,14 +389,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 
 fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) -> JoinHandle<()> {
     return spawn(move || {
-        let stdout = Command::new("oc")
+        let mut child = Command::new("oc")
             .stdout(Stdio::piped())
             .arg("logs")
             .arg("-f")
             .arg("--since=200h")
             .arg(name)
             .spawn().expect("Unable to start tool");
-        match stdout.stdout {
+        match child.stdout.take() {
             None => {}
             Some(l) => {
                 let mut reader = BufReader::new(l);
@@ -410,6 +410,7 @@ fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_st
                     parse_and_send(&buf, &sender);
                     buf.clear()
                 }
+                child.kill().unwrap()
             }
         }
     });
