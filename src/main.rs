@@ -85,7 +85,7 @@ impl Messages {
     }
 
     fn put(&mut self, m: Message) {
-        if self.size > 300_000_000 {
+        if self.size > 3_000_000_000 {
             self.map.values_mut().for_each(|v| {
                 match v.pop_back() {
                     None => {}
