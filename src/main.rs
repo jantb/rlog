@@ -6,7 +6,6 @@ use std::{
     io::{
         self,
     },
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering as OtherOrdering},
@@ -46,7 +45,8 @@ use crate::level::Level;
 use crate::message::Message;
 use crate::Mode::{Search, SelectPods};
 use crate::parse_send::parse_and_send;
-use crate::spawn_reader_thread::spawn_reader_thread;
+use crate::pod::populate_pods::populate_pods;
+use crate::spawn_reader_thread::{clean_up_threads, spawn_reader_thread};
 
 mod pod;
 mod search_thread;
@@ -85,34 +85,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("{:?}", err)
     }
     Ok(())
-}
-
-pub fn populate_pods(app: &mut App) {
-    let output = Command::new("oc")
-        .arg("get")
-        .arg("pods")
-        .arg("-o")
-        .arg("json")
-        .output()
-        .expect("ls command failed to start");
-    match output.status.success() {
-        true => {
-            let result: Result<pod::pods::Pods, _> = serde_json::from_str(String::from_utf8_lossy(&output.stdout).to_string().as_str());
-
-            let pods = match result {
-                Ok(l) => { l }
-                Err(err) => {
-                    println!("{}", err.to_string());
-                    return;
-                }
-            };
-            app.pods = StatefulList::with_items(pods.items.iter()
-                .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
-        }
-        false => {
-            println!("{}", String::from_utf8_lossy(&output.stderr));
-        }
-    }
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
@@ -243,13 +215,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
     }
 }
 
-fn clean_up_threads(app: &mut App) {
-    app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
-    while app.handles.len() > 0 {
-        let handle = app.handles.remove(0); // moves it into cur_thread
-        handle.join().unwrap();
-    }
-}
 
 
 fn filter(app: &mut App) {

@@ -7,7 +7,7 @@ use std::thread;
 use std::thread::{JoinHandle, spawn};
 use std::time::Duration;
 
-use crate::{CommandMessage, OtherOrdering, parse_and_send};
+use crate::{App, CommandMessage, OtherOrdering, parse_and_send};
 
 pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) -> JoinHandle<()> {
     return spawn(move || {
@@ -47,4 +47,13 @@ pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_
             }
         }
     });
+}
+
+
+pub fn clean_up_threads(app: &mut App) {
+    app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
+    while app.handles.len() > 0 {
+        let handle = app.handles.remove(0); // moves it into cur_thread
+        handle.join().unwrap();
+    }
 }
