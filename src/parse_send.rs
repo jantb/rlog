@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use crate::{CommandMessage, Level, LogFormat, Message};
 
 pub fn parse_and_send(x: &str, sender: &Sender<CommandMessage>) {
-    let result: Result<LogFormat, _> = serde_json::from_str(x.to_string().as_str());
+    let result: Result<LogFormat, _> = serde_json::from_str(x);
     let log_entry = match result {
         Ok(l) => { l }
         Err(_) => {

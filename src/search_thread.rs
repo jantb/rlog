@@ -48,7 +48,7 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                         match error {
                             TryRecvError::Empty => {
                                 let now = Instant::now();
-                                let vec = storage
+                                tx_result.send(ResultMessage::Messages(storage
                                     .messages
                                     .iter()
                                     .enumerate()
@@ -56,8 +56,7 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                                     .filter(|x| storage.filter.is_match(x.1.value.as_str()))
                                     .skip(storage.skip)
                                     .take(storage.result_size)
-                                    .map(|(_i, m)| { m.clone() }).collect();
-                                tx_result.send(ResultMessage::Messages(vec)).unwrap();
+                                    .map(|(_i, m)| { m.clone() }).collect())).unwrap();
                                 tx_result.send(ResultMessage::Elapsed(now.elapsed())).unwrap();
                                 rx.recv().unwrap()
                             }

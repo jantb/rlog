@@ -21,13 +21,12 @@ pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_
         match child.stdout.take() {
             None => {}
             Some(l) => {
-                let should_i_stop2 = should_i_stop.clone();
+                let should_i_stop_thread = should_i_stop.clone();
                 spawn(move || {
                     let mut reader = BufReader::new(l);
                     let mut buf = String::new();
-                    while !should_i_stop.load(OtherOrdering::SeqCst) {
-                        let result = reader.read_line(&mut buf);
-                        match result {
+                    while !should_i_stop_thread.load(OtherOrdering::SeqCst) {
+                        match reader.read_line(&mut buf) {
                             Ok(result) => {
                                 if result == 0 {
                                     thread::sleep(Duration::from_millis(100));
@@ -40,7 +39,7 @@ pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_
                         }
                     }
                 });
-                while !should_i_stop2.load(OtherOrdering::SeqCst) {
+                while !should_i_stop.load(OtherOrdering::SeqCst) {
                     thread::sleep(Duration::from_millis(100));
                 }
                 child.kill().unwrap()

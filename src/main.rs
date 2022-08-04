@@ -297,7 +297,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 content.push(Span::raw(n.get(0).unwrap().to_string()));
             } else {
-                content.push(Span::raw(&m.value));
+                content.push(Span::raw(m.value.as_str()));
             }
             let mut text = Text::from(Spans::from(content));
             if m.value.contains("\n") {
