@@ -149,11 +149,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     match key.code {
                         KeyCode::Char(c) => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                                app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
-                                while app.handles.len() > 0 {
-                                    let handle = app.handles.remove(0); // moves it into cur_thread
-                                    handle.join().unwrap();
-                                }
+                                clean_up_threads(&mut app);
                                 app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
                             }
@@ -202,16 +198,13 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         }
                         KeyCode::Char(c) => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                clean_up_threads(&mut app);
                                 app.tx.send(CommandMessage::Exit).unwrap();
                                 return Ok(());
                             }
                             if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                 app.mode = SelectPods;
-                                app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
-                                while app.handles.len() > 0 {
-                                    let handle = app.handles.remove(0); // moves it into cur_thread
-                                    handle.join().unwrap();
-                                }
+                                clean_up_threads(&mut app);
 
                                 app.tx.send(CommandMessage::Clear).unwrap();
                                 continue;
@@ -247,6 +240,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 }
             }
         }
+    }
+}
+
+fn clean_up_threads(app: &mut App) {
+    app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
+    while app.handles.len() > 0 {
+        let handle = app.handles.remove(0); // moves it into cur_thread
+        handle.join().unwrap();
     }
 }
 
