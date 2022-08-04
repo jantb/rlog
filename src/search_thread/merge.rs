@@ -1,5 +1,5 @@
-use std::iter::Peekable;
 use std::cmp::Ordering;
+use std::iter::Peekable;
 
 pub(crate) struct MergeAscending<L, R>
     where L: Iterator<Item = R::Item>,
