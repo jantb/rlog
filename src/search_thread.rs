@@ -17,6 +17,7 @@ mod merge;
 
 struct Storage {
     filter: Regex,
+    filter_not: Vec<Regex>,
     messages: Messages,
     skip: usize,
     result_size: usize,
@@ -26,6 +27,7 @@ impl Default for Storage {
     fn default() -> Storage {
         Storage {
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
+            filter_not: Vec::new(),
             messages: Messages::new(),
             skip: 0,
             result_size: 0,
@@ -50,6 +52,7 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                                     .messages
                                     .iter()
                                     .enumerate()
+                                    .filter(|x| if storage.filter_not.len() == 0 { true } else { !storage.filter_not.iter().any(|y| y.is_match(x.1.value.as_str())) })
                                     .filter(|x| storage.filter.is_match(x.1.value.as_str()))
                                     .skip(storage.skip)
                                     .take(storage.result_size)
@@ -99,6 +102,12 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                         Ok(_) => {}
                         Err(_) => { return; }
                     };
+                }
+                CommandMessage::FilterNotRegexes(s) => {
+                    let filters: Vec<_> = s.iter()
+                        .map(|v| Regex::new(format!(r#".*{}.*"#, v).as_str()).unwrap_or(Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap()))
+                        .collect();
+                    storage.filter_not = filters;
                 }
             }
         }
