@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::{CommandMessage, Message, Mode, Pod, ResultMessage, Search, StatefulList};
@@ -8,6 +9,7 @@ use crate::{CommandMessage, Message, Mode, Pod, ResultMessage, Search, StatefulL
 /// App holds the state of the application
 pub struct App {
     pub(crate) stops: Vec<Arc<AtomicBool>>,
+    pub(crate) handles: Vec<JoinHandle<()>>,
     pub(crate) pods: StatefulList<Pod>,
     pub(crate) input: Vec<char>,
     pub(crate) mode: Mode,
@@ -27,6 +29,7 @@ impl App {
     pub fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
             stops: Vec::new(),
+            handles: Vec::new(),
             pods: StatefulList::with_items(vec![]),
             mode: Search,
             input: Vec::new(),
