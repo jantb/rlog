@@ -284,7 +284,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 fn filter(app: &mut App) {
     let query: String = app.input.iter().collect();
     let x: Vec<_> = query.split(" ").collect();
-    let neg_query: Vec<_> = x.iter().filter(|v| v.starts_with("!")).map(|v| v.strip_prefix("!").unwrap().to_string()).collect();
+    let neg_query: Vec<_> = x.iter().filter(|v| v.starts_with("!") && v.len() > 1).map(|v| v.strip_prefix("!").unwrap().to_string()).collect();
     let pos_query: Vec<_> = x.iter().filter(|&v| !v.starts_with("!")).map(|v| *v).collect();
     let pos_query = pos_query.join(" ");
     app.tx.send(CommandMessage::FilterRegex(pos_query)).unwrap();
