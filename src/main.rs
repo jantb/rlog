@@ -396,10 +396,10 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{:.2?}──", app.elapsed), Style::default().fg(Color::Cyan)),
             Span::styled(match app.skip {
-                0 => { " Follow mode " }
-                _ => { "" }
+                0 => { " Enter to unfollow " }
+                _ => { " Enter to follow" }
             }, Style::default().fg(Color::Cyan)),
-            Span::styled(format!("── total lines {} ── ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" ── total lines {} ── ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{}", ByteSize::b(app.size)), Style::default().fg(Color::Cyan)),
             Span::styled(format!(" ── {}", "CTRL-q "), Style::default().fg(Color::Cyan)),
@@ -418,7 +418,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
                 false => { Color::Cyan }
             })),
             Span::styled(format!("{}", ", CTRL-r "), Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{}", "WARN"), Style::default().fg(match app.show_error {
+            Span::styled(format!("{}", "ERROR"), Style::default().fg(match app.show_error {
                 true => { Color::Red }
                 false => { Color::Cyan }
             })),
