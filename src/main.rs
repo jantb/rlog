@@ -214,6 +214,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     clean_up_threads(&mut app);
 
                                     app.tx.send(CommandMessage::Clear).unwrap();
+                                    populate_pods(&mut app);
                                     continue;
                                 }
                                 app.input.insert(app.input_index, c);

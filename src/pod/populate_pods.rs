@@ -21,7 +21,7 @@ pub fn populate_pods(app: &mut App) {
                     return;
                 }
             };
-            app.pods = StatefulList::with_items(pods.items.iter()
+            app.pods = StatefulList::with_items(pods.items.iter().filter(|pod| pod.status.phase == "Running")
                 .map(|p| { Pod { name: p.metadata.name.clone() } }).collect());
         }
         false => {

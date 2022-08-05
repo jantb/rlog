@@ -56,6 +56,9 @@ pub fn clean_up_threads(app: &mut App) {
     app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
     while app.handles.len() > 0 {
         let handle = app.handles.remove(0); // moves it into cur_thread
-        handle.join().unwrap();
+        match handle.join() {
+            Ok(_) => {}
+            Err(_) => {}
+        };
     }
 }
