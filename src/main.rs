@@ -36,7 +36,7 @@ use tui::{
 };
 use tui::layout::{Alignment, Rect};
 use tui::style::Modifier;
-use tui::widgets::{List, ListItem, ListState, Wrap};
+use tui::widgets::{List, ListItem, ListState};
 
 use search_thread::command_message::CommandMessage;
 use search_thread::result_message::ResultMessage;
@@ -321,7 +321,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let screen_height: i32 = chunks[0].height.into();
 
     let x: Vec<_> = messages.lines.into_iter().skip(max(messages_height as i32 - screen_height, 0).try_into().unwrap()).collect();
-    let messages = Paragraph::new(Text::from(x)).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
+    let messages = Paragraph::new(Text::from(x)).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(messages, chunks[0]);
 
