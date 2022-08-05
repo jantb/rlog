@@ -19,11 +19,11 @@ use std::cmp::max;
 
 use bytesize::ByteSize;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use crossterm::event::KeyModifiers;
+use crossterm::event::{KeyModifiers, MouseEventKind};
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tui::{
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen,EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -79,6 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
+        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
 
@@ -115,107 +116,149 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         if !event::poll(Duration::from_millis(8)).unwrap() {
             continue;
         }
-        if let Event::Key(key) = event::read()? {
-            changed = true;
-            match app.mode {
-                SelectPods => {
-                    match key.code {
-                        KeyCode::Char(c) => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                                clean_up_threads(&mut app);
-                                app.tx.send(CommandMessage::Exit).unwrap();
-                                return Ok(());
-                            }
-                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'a' {
-                                app.pods.select_all();
-                            }
-                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
-                                let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
-                                app.mode = Search;
-                                app.stops.clear();
-                                let stops: Vec<_> = selected_pods.iter().map(|pod| {
-                                    let name = pod.name.clone();
-                                    let sender = app.tx.clone();
-                                    let please_stop = Arc::new(AtomicBool::new(false));
-                                    let should_i_stop = please_stop.clone();
+        changed = true;
+        match event::read()? {
+            Event::Key(key) => {
+                match app.mode {
+                    SelectPods => {
+                        match key.code {
+                            KeyCode::Char(c) => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                    clean_up_threads(&mut app);
+                                    app.tx.send(CommandMessage::Exit).unwrap();
+                                    return Ok(());
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'a' {
+                                    app.pods.select_all();
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                    let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
+                                    app.mode = Search;
+                                    app.stops.clear();
+                                    let stops: Vec<_> = selected_pods.iter().map(|pod| {
+                                        let name = pod.name.clone();
+                                        let sender = app.tx.clone();
+                                        let please_stop = Arc::new(AtomicBool::new(false));
+                                        let should_i_stop = please_stop.clone();
 
-                                    return (please_stop, spawn_reader_thread(name, sender, should_i_stop));
-                                }).collect();
-                                let (x, y): (Vec<_>, Vec<_>) = stops.into_iter().map(|(a, b)| (a, b)).unzip();
-                                app.stops = x;
-                                app.handles = y;
-                                continue;
+                                        return (please_stop, spawn_reader_thread(name, sender, should_i_stop));
+                                    }).collect();
+                                    let (x, y): (Vec<_>, Vec<_>) = stops.into_iter().map(|(a, b)| (a, b)).unzip();
+                                    app.stops = x;
+                                    app.handles = y;
+                                    continue;
+                                }
                             }
+                            KeyCode::Down => app.pods.next(),
+                            KeyCode::Up => app.pods.previous(),
+                            KeyCode::Enter => app.pods.select(),
+                            _ => {}
                         }
-                        KeyCode::Down => app.pods.next(),
-                        KeyCode::Up => app.pods.previous(),
-                        KeyCode::Enter => app.pods.select(),
-                        _ => {}
+                    }
+                    Search => {
+                        match key.code {
+                            KeyCode::Up => {
+                                if app.top_skip == 0 {
+                                    app.skip += 1;
+                                    app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                                } else {
+                                    app.dropped_top_messages += 1;
+                                    app.dropped_bottom_messages += 1;
+                                }
+                            }
+                            KeyCode::Down => {
+                                if app.dropped_bottom_messages == 0 {
+                                    if app.skip > 0 {
+                                        app.skip -= 1;
+                                        app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                                    }
+                                } else {
+                                    app.dropped_bottom_messages -= 1;
+                                    app.dropped_top_messages -= 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                app.skip = 0;
+                                app.dropped_bottom_messages = 0;
+                                app.dropped_top_messages = 0;
+                                app.tx.send(CommandMessage::SetSkip(0)).unwrap();
+                            }
+                            KeyCode::Char(c) => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
+                                    clean_up_threads(&mut app);
+                                    app.tx.send(CommandMessage::Exit).unwrap();
+                                    return Ok(());
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                    app.mode = SelectPods;
+                                    clean_up_threads(&mut app);
+
+                                    app.tx.send(CommandMessage::Clear).unwrap();
+                                    continue;
+                                }
+                                app.input.insert(app.input_index, c);
+                                app.input_index += 1;
+                                filter(&mut app);
+                            }
+                            KeyCode::Backspace => {
+                                if app.input_index > 0 {
+                                    app.input_index -= 1;
+                                    app.input.remove(app.input_index);
+                                    filter(&mut app);
+                                }
+                            }
+                            KeyCode::Left => {
+                                if app.input_index > 0 {
+                                    let (x, y) = terminal.get_cursor().unwrap();
+                                    terminal.set_cursor(x - 1, y).ok();
+                                    app.input_index -= 1
+                                }
+                            }
+
+                            KeyCode::Right => {
+                                if app.input_index < app.input.len() {
+                                    let (x, y) = terminal.get_cursor().unwrap();
+                                    terminal.set_cursor(x + 1, y).ok();
+                                    app.input_index += 1
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
-                Search => {
-                    match key.code {
-                        KeyCode::Up => {
-                            app.skip += 1;
-                            app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
-                        }
-                        KeyCode::Down => {
+            }
+            Event::Mouse(mouse) => {
+                match mouse.kind {
+                    MouseEventKind::Down(_) => {}
+                    MouseEventKind::Up(_) => {}
+                    MouseEventKind::Drag(_) => {}
+                    MouseEventKind::Moved => {}
+                    MouseEventKind::ScrollDown => {
+                        if app.dropped_bottom_messages == 0 {
                             if app.skip > 0 {
                                 app.skip -= 1;
                                 app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
                             }
+                        } else {
+                            app.dropped_bottom_messages -= 1;
+                            app.dropped_top_messages -= 1;
                         }
-                        KeyCode::Enter => {
-                            app.skip = 0;
-                            app.tx.send(CommandMessage::SetSkip(0)).unwrap();
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if app.top_skip == 0 {
+                            app.skip += 1;
+                            app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                        } else {
+                            app.dropped_top_messages += 1;
+                            app.dropped_bottom_messages += 1;
                         }
-                        KeyCode::Char(c) => {
-                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                                clean_up_threads(&mut app);
-                                app.tx.send(CommandMessage::Exit).unwrap();
-                                return Ok(());
-                            }
-                            if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
-                                app.mode = SelectPods;
-                                clean_up_threads(&mut app);
-
-                                app.tx.send(CommandMessage::Clear).unwrap();
-                                continue;
-                            }
-                            app.input.insert(app.input_index, c);
-                            app.input_index += 1;
-                            filter(&mut app);
-                        }
-                        KeyCode::Backspace => {
-                            if app.input_index > 0 {
-                                app.input_index -= 1;
-                                app.input.remove(app.input_index);
-                                filter(&mut app);
-                            }
-                        }
-                        KeyCode::Left => {
-                            if app.input_index > 0 {
-                                let (x, y) = terminal.get_cursor().unwrap();
-                                terminal.set_cursor(x - 1, y).ok();
-                                app.input_index -= 1
-                            }
-                        }
-
-                        KeyCode::Right => {
-                            if app.input_index < app.input.len() {
-                                let (x, y) = terminal.get_cursor().unwrap();
-                                terminal.set_cursor(x + 1, y).ok();
-                                app.input_index += 1
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }
+            Event::Resize(_, _) => {}
         }
     }
 }
-
 
 
 fn filter(app: &mut App) {
@@ -319,8 +362,11 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
         sum
     });
     let screen_height: i32 = chunks[0].height.into();
+    let top_skip: usize = max(messages_height as i32 - app.dropped_top_messages as i32 - screen_height, 0).try_into().unwrap();
+    app.top_skip = top_skip;
+    let take = messages_height - top_skip - app.dropped_bottom_messages;
 
-    let x: Vec<_> = messages.lines.into_iter().skip(max(messages_height as i32 - screen_height, 0).try_into().unwrap()).collect();
+    let x: Vec<_> = messages.lines.into_iter().skip(top_skip).take(take).collect();
     let messages = Paragraph::new(Text::from(x)).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(messages, chunks[0]);
