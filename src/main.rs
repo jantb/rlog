@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use std::cmp::max;
 
 use bytesize::ByteSize;
 use crossterm::{
@@ -308,11 +309,20 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             return text;
         }).collect();
     messages.reverse();
+    let messages_height = messages.iter().fold(Text::raw(""), |mut sum, val| {
+        sum.extend(val.clone());
+        sum
+    }).height();
+
     let messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
         sum
     });
-    let messages = Paragraph::new(messages).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
+    let screen_height: i32 = chunks[0].height.into();
+
+    let x: Vec<_> = messages.lines.into_iter().skip(max(messages_height as i32 - screen_height, 0).try_into().unwrap()).collect();
+    let messages = Paragraph::new(Text::from(x)).wrap(Wrap { trim: false }).block(Block::default().borders(Borders::NONE));
+
     f.render_widget(messages, chunks[0]);
 
     let (msg, style) = (

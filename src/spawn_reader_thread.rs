@@ -42,7 +42,10 @@ pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_
                 while !should_i_stop.load(OtherOrdering::SeqCst) {
                     thread::sleep(Duration::from_millis(100));
                 }
-                child.kill().unwrap()
+                match child.kill() {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
             }
         }
     });
