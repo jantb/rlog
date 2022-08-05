@@ -8,8 +8,11 @@ use crate::{CommandMessage, Message, Mode, Pod, ResultMessage, Search, StatefulL
 
 /// App holds the state of the application
 pub struct App {
+    pub(crate) show_info: bool,
+    pub(crate) show_warn: bool,
+    pub(crate) show_debug: bool,
+    pub(crate) show_error: bool,
     pub(crate) stops: Vec<Arc<AtomicBool>>,
-    pub(crate) screen_height: usize,
     pub(crate) dropped_top_messages: usize,
     pub(crate) dropped_bottom_messages: usize,
     pub(crate) top_skip: usize,
@@ -32,6 +35,10 @@ pub struct App {
 impl App {
     pub fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
         App {
+            show_info: true,
+            show_warn: true,
+            show_debug: true,
+            show_error: true,
             dropped_top_messages: 0,
             dropped_bottom_messages: 0,
             stops: Vec::new(),
@@ -48,7 +55,6 @@ impl App {
             window_size: 0,
             tx,
             rx_result,
-            screen_height: 0,
             top_skip: 0,
         }
     }

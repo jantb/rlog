@@ -108,6 +108,18 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                         .collect();
                     storage.filter_not = filters;
                 }
+                CommandMessage::ToggleInfo() => {
+                    storage.messages.info()
+                }
+                CommandMessage::ToggleDebug() => {
+                    storage.messages.debug()
+                }
+                CommandMessage::ToggleWarn() => {
+                    storage.messages.warn()
+                }
+                CommandMessage::ToggleError() => {
+                    storage.messages.error()
+                }
             }
         }
     });

@@ -189,6 +189,26 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     app.tx.send(CommandMessage::Exit).unwrap();
                                     return Ok(());
                                 }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'q' {
+                                    app.show_debug = !app.show_debug;
+                                    app.tx.send(CommandMessage::ToggleDebug()).unwrap();
+                                    continue
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'w' {
+                                    app.show_info = !app.show_info;
+                                    app.tx.send(CommandMessage::ToggleInfo()).unwrap();
+                                    continue
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' {
+                                    app.show_warn = !app.show_warn;
+                                    app.tx.send(CommandMessage::ToggleWarn()).unwrap();
+                                    continue
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' {
+                                    app.show_error = !app.show_error;
+                                    app.tx.send(CommandMessage::ToggleError()).unwrap();
+                                    continue
+                                }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                     app.mode = SelectPods;
                                     clean_up_threads(&mut app);
@@ -382,6 +402,26 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             Span::styled(format!("── total lines {} ── ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{}", ByteSize::b(app.size)), Style::default().fg(Color::Cyan)),
+            Span::styled(format!(" ── {}", "CTRL-q "), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", "DEBUG"), Style::default().fg(match app.show_debug {
+                true => { Color::Blue }
+                false => { Color::Cyan }
+            })),
+            Span::styled(format!("{}", ", CTRL-w "), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", "INFO"), Style::default().fg(match app.show_info {
+                true => { Color::Green }
+                false => { Color::Cyan }
+            })),
+            Span::styled(format!("{}", ", CTRL-e "), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", "WARN"), Style::default().fg(match app.show_warn {
+                true => { Color::Magenta }
+                false => { Color::Cyan }
+            })),
+            Span::styled(format!("{}", ", CTRL-r "), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", "WARN"), Style::default().fg(match app.show_error {
+                true => { Color::Red }
+                false => { Color::Cyan }
+            })),
         ],
         Style::default());
     let mut text = Text::from(Spans::from(msg));
