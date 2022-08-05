@@ -394,10 +394,10 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let (msg, style) = (
         vec![
             Span::styled("┌─ ", Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{:.2?}──", app.elapsed), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{:.2?}── ", app.elapsed), Style::default().fg(Color::Cyan)),
             Span::styled(match app.skip {
-                0 => { " Enter to unfollow " }
-                _ => { " Enter to follow" }
+                0 => { "Following" }
+                _ => { "Enter to follow" }
             }, Style::default().fg(Color::Cyan)),
             Span::styled(format!(" ── total lines {} ── ", app.length.to_formatted_string(&Locale::fr)), Style::default().fg(Color::Cyan)),
             Span::styled("", Style::default().fg(Color::Cyan)),
