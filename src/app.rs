@@ -16,6 +16,8 @@ pub struct App {
     pub(crate) dropped_top_messages: usize,
     pub(crate) dropped_bottom_messages: usize,
     pub(crate) top_skip: usize,
+    pub(crate) take: usize,
+    pub(crate) screen_height: usize,
     pub(crate) handles: Vec<JoinHandle<()>>,
     pub(crate) pods: StatefulList<Pod>,
     pub(crate) input: Vec<char>,
@@ -56,6 +58,8 @@ impl App {
             tx,
             rx_result,
             top_skip: 0,
+            take: 0,
+            screen_height: 0
         }
     }
 }

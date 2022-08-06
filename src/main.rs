@@ -158,6 +158,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     Search => {
                         match key.code {
                             KeyCode::Up => {
+                                if app.take < app.screen_height {
+                                    continue;
+                                }
+
                                 if app.top_skip == 0 {
                                     app.skip += 1;
                                     app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
@@ -192,22 +196,22 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'q' {
                                     app.show_debug = !app.show_debug;
                                     app.tx.send(CommandMessage::ToggleDebug()).unwrap();
-                                    continue
+                                    continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'w' {
                                     app.show_info = !app.show_info;
                                     app.tx.send(CommandMessage::ToggleInfo()).unwrap();
-                                    continue
+                                    continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'e' {
                                     app.show_warn = !app.show_warn;
                                     app.tx.send(CommandMessage::ToggleWarn()).unwrap();
-                                    continue
+                                    continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' {
                                     app.show_error = !app.show_error;
                                     app.tx.send(CommandMessage::ToggleError()).unwrap();
-                                    continue
+                                    continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                     app.mode = SelectPods;
@@ -266,6 +270,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         }
                     }
                     MouseEventKind::ScrollUp => {
+                        if app.take < app.screen_height {
+                            continue;
+                        }
                         if app.top_skip == 0 {
                             app.skip += 1;
                             app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
@@ -385,9 +392,10 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let screen_height: i32 = chunks[0].height.into();
     let top_skip: usize = max(messages_height as i32 - app.dropped_top_messages as i32 - screen_height, 0).try_into().unwrap();
     app.top_skip = top_skip;
-    let take = messages_height - top_skip - app.dropped_bottom_messages;
+    app.take = max(messages_height as i32 - top_skip as i32 - app.dropped_bottom_messages as i32, 0) as usize;
+    app.screen_height = screen_height as usize;
 
-    let x: Vec<_> = messages.lines.into_iter().skip(top_skip).take(take).collect();
+    let x: Vec<_> = messages.lines.into_iter().skip(top_skip).take(app.take).collect();
     let messages = Paragraph::new(Text::from(x)).block(Block::default().borders(Borders::NONE));
 
     f.render_widget(messages, chunks[0]);
