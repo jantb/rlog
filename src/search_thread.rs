@@ -19,6 +19,7 @@ struct Storage {
     filter: Regex,
     filter_not: Vec<Regex>,
     messages: Messages,
+    skip_messages: Messages,
     skip: usize,
     result_size: usize,
 }
@@ -29,6 +30,7 @@ impl Default for Storage {
             filter: Regex::new(format!(r#"{}"#, ".*").as_str()).unwrap(),
             filter_not: Vec::new(),
             messages: Messages::new(),
+            skip_messages: Messages::new(),
             skip: 0,
             result_size: 0,
         }
@@ -72,8 +74,11 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                     break;
                 }
                 CommandMessage::InsertJson(message) => {
-                    storage.messages.put(message);
-
+                    if storage.skip == 0 {
+                        storage.messages.put(message);
+                    } else {
+                        storage.skip_messages.put(message);
+                    }
                     match tx_result.send(ResultMessage::Size(storage.messages.size)) {
                         Ok(_) => {}
                         Err(_) => { return; }
@@ -84,6 +89,24 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                     };
                 }
                 CommandMessage::SetSkip(i) => {
+                    if storage.skip == 1 && i == 0 {
+                        let x1: Vec<_> = storage.skip_messages.map.into_iter().map(|f| {
+                            let x2: Vec<_> = f.1.into_iter().rev().collect();
+                            x2
+                        }).flatten().collect();
+                        let len = x1.len();
+                        x1.into_iter().for_each(|m| storage.messages.put(m));
+                        storage.skip_messages = Messages::new();
+                        storage.skip = len - 1;
+                        match tx_result.send(ResultMessage::Skip(storage.skip)) {
+                            Ok(_) => {}
+                            Err(_) => { return; }
+                        };
+                        continue;
+                    } else if storage.skip > 1 && i == 0 {
+                        storage.skip_messages.map.into_iter().for_each(|f| f.1.into_iter().rev().for_each(|f| storage.messages.put(f)));
+                        storage.skip_messages = Messages::new()
+                    }
                     storage.skip = i;
                 }
                 CommandMessage::SetResultSize(i) => {

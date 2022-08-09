@@ -107,6 +107,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 ResultMessage::Length(length) => {
                     app.length = length
                 }
+                ResultMessage::Skip(s) => {
+                    app.skip = s
+                }
             }
         }
         if changed {
