@@ -97,7 +97,7 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                         let len = x1.len();
                         x1.into_iter().for_each(|m| storage.messages.put(m));
                         storage.skip_messages = Messages::new();
-                        storage.skip = len - 1;
+                        storage.skip = len;
                         match tx_result.send(ResultMessage::Skip(storage.skip)) {
                             Ok(_) => {}
                             Err(_) => { return; }
