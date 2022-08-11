@@ -79,11 +79,11 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                     } else {
                         storage.skip_messages.put(message);
                     }
-                    match tx_result.send(ResultMessage::Size(storage.messages.size)) {
+                    match tx_result.send(ResultMessage::Size(storage.messages.size + storage.skip_messages.size)) {
                         Ok(_) => {}
                         Err(_) => { return; }
                     };
-                    match tx_result.send(ResultMessage::Length(storage.messages.count)) {
+                    match tx_result.send(ResultMessage::Length(storage.messages.count + storage.skip_messages.count)) {
                         Ok(_) => {}
                         Err(_) => { return; }
                     };
