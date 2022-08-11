@@ -31,11 +31,12 @@ pub struct App {
     pub(crate) window_size: u16,
     pub(crate) tx: Sender<CommandMessage>,
     pub(crate) rx_result: Receiver<ResultMessage>,
+    pub(crate) brokers: Vec<String>,
 }
 
 
 impl App {
-    pub fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>) -> App {
+    pub fn default(tx: Sender<CommandMessage>, rx_result: Receiver<ResultMessage>, brokers: Vec<String>) -> App {
         App {
             show_info: true,
             show_warn: true,
@@ -59,7 +60,8 @@ impl App {
             rx_result,
             top_skip: 0,
             take: 0,
-            screen_height: 0
+            screen_height: 0,
+            brokers: brokers
         }
     }
 }
