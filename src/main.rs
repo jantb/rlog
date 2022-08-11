@@ -386,7 +386,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             let x1: Vec<_> = m.lines.iter().map(|s| {
                 let spans = s.clone().0;
                 let (f, l) = spans.split_at(spans.len() - 1);
-                let line = &&l[0].content.split_at(chunks[0].width as usize - Text::from(Spans::from(Vec::from(f))).width());
+                let line = &&l[0].content.split_at(max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize);
                 let mut first_part = Vec::from(f);
                 first_part.push(Span::from(line.0.to_string()));
                 let text1 = sub_strings(line.1, chunks[0].width as usize).iter()
