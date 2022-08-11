@@ -1,29 +1,29 @@
 extern crate core;
 
-use std::{
-    collections::HashSet,
-    error::Error,
-    io::{
+use std::{collections::HashSet, env, error::Error, io::{
+    self,
+}, sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering as OtherOrdering},
+    mpsc::{
         self,
     },
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering as OtherOrdering},
-        mpsc::{
-            self,
-        },
-    },
-    time::Duration,
-};
+}, thread, time::Duration};
 use std::cmp::max;
+use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+use std::time::SystemTime;
 
 use bytesize::ByteSize;
+use chrono::DateTime;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use crossterm::event::{KeyModifiers, MouseEventKind};
+use kafka::client::{FetchPartition, KafkaClient, PartitionOffset};
+use kafka::consumer::FetchOffset;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use tui::{
@@ -42,6 +42,7 @@ use search_thread::command_message::CommandMessage;
 use search_thread::result_message::ResultMessage;
 
 use crate::app::App;
+use crate::CommandMessage::InsertJson;
 use crate::level::Level;
 use crate::message::Message;
 use crate::Mode::{Search, SelectPods};
@@ -58,6 +59,25 @@ mod spawn_reader_thread;
 mod level;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let args: Vec<_> = env::args().collect();
+    let mut opts = getopts::Options::new();
+    opts.optopt(
+        "b",
+        "brokers",
+        "Specify kafka brokers (comma separated)",
+        "HOSTS",
+    );
+    let m = match opts.parse(&args[1..]) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    let brokers: Vec<_> = m
+        .opt_str("brokers")
+        .unwrap_or_else(|| "localhost:9092".to_owned())
+        .split(',')
+        .map(|s| s.trim().to_owned())
+        .collect();
+
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -68,7 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
-    let mut app = App::default(tx, rx_result);
+    let mut app = App::default(tx, rx_result, brokers);
 
     search_thread::search_thread(rx, tx_result);
     populate_pods(&mut app);
@@ -196,6 +216,16 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     app.tx.send(CommandMessage::Exit).unwrap();
                                     return Ok(());
                                 }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'k' {
+                                    clean_up_threads(&mut app);
+                                    app.tx.send(CommandMessage::Clear).unwrap();
+                                    let sender = app.tx.clone();
+                                    let vec = app.brokers.clone();
+                                    thread::spawn(move || {
+                                        read_kafka(vec, sender)
+                                    });
+                                    continue;
+                                }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'q' {
                                     app.show_debug = !app.show_debug;
                                     app.tx.send(CommandMessage::ToggleDebug()).unwrap();
@@ -287,6 +317,9 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 }
             }
             Event::Resize(_, _) => {}
+            Event::FocusGained => {}
+            Event::FocusLost => {}
+            Event::Paste(_) => {}
         }
     }
 }
@@ -383,6 +416,29 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             return text;
         }).collect();
     messages.reverse();
+
+    let messages: Vec<_> = messages.into_iter().map(|m| {
+        if m.width() > chunks[0].width as usize {
+            let x1: Vec<_> = m.lines.iter().map(|s| {
+                let spans = s.clone().0;
+                let (f, l) = spans.split_at(spans.len() - 1);
+                let line = &&l[0].content.split_at(chunks[0].width as usize - Text::from(Spans::from(Vec::from(f))).width());
+                let mut first_part = Vec::from(f);
+                first_part.push(Span::from(line.0.to_string()));
+                let text1 = sub_strings(line.1, chunks[0].width as usize).iter()
+                    .map(|f| Text::raw(f.to_string())).fold(Text::from(Spans::from(first_part)), |mut sum, f| {
+                    sum.extend(f);
+                    sum
+                });
+                text1
+            }).collect();
+            x1
+        } else {
+            vec![m]
+        }
+    }
+    )
+        .flatten().collect();
     let messages_height = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
         sum
@@ -536,4 +592,110 @@ impl<Pod> StatefulList<Pod> {
             let _ = self.selected.insert(i.0);
         });
     }
+}
+
+
+fn read_kafka(cfg: Vec<String>, sender: Sender<CommandMessage>) {
+    let mut client = KafkaClient::new(cfg);
+    client.load_metadata_all().map_err(|e| e.to_string()).unwrap();
+
+    let topics: Vec<_> = client.topics().names().map(|n| n.to_owned()).collect();
+
+    let mut offsets = client.fetch_offsets(&topics, FetchOffset::Latest).unwrap();
+
+    let mut x: Vec<_> = topics.iter().map(|topic| {
+        let partition_offsets = offsets.get(topic).unwrap();
+        let fetch_partitions: Vec<_> = partition_offsets.iter().map(|p| {
+            FetchPartition::new(topic.as_str(), p.partition, match p.offset {
+                200..=10_0000_0000_0000 => { p.offset - 200 }
+                _ => 0
+            })
+        }).collect();
+        fetch_partitions
+    }).flatten().collect();
+
+    loop {
+        offsets = fetch(&mut client, &x, offsets, sender.clone());
+        x = topics.iter().filter(|f| !f.contains("consumer")).map(|topic| {
+            let partition_offsets = match offsets.get(topic) {
+                None => {
+                    panic!()
+                }
+                Some(s) => s
+            };
+            let fetch_partitions: Vec<_> = partition_offsets.iter().map(|p| {
+                FetchPartition::new(topic.as_str(), p.partition, p.offset)
+            }).collect();
+            fetch_partitions
+        }).flatten().collect();
+
+        thread::sleep(Duration::from_millis(1000));
+    }
+}
+
+fn fetch<'a>(client: &mut KafkaClient, x: &Vec<FetchPartition>, offsets: HashMap<String, Vec<PartitionOffset>>, sender: Sender<CommandMessage>) -> HashMap<String, Vec<PartitionOffset>> {
+    let mut map = HashMap::new();
+    match client.fetch_messages(x.as_slice()) {
+        Ok(resps) => {
+            for resp in resps {
+                for topic in resp.topics() {
+                    for partition in topic.partitions() {
+                        map.insert(topic.topic().to_string(), Vec::new());
+                        let x2 = match offsets.get(topic.topic()) {
+                            None => { continue; }
+                            Some(s) => { s }
+                        };
+                        let mut map1 = HashMap::new();
+                        for x in x2 {
+                            map1.insert(x.partition, x.offset);
+                        }
+                        for data in partition.data() {
+                            for message in data.messages() {
+                                let key = match std::str::from_utf8(message.key) {
+                                    Ok(o) => { o }
+                                    Err(_) => { continue; }
+                                };
+                                let value = match std::str::from_utf8(message.value) {
+                                    Ok(o) => { o }
+                                    Err(_) => { continue; }
+                                };
+
+                                sender.send(InsertJson(Message {
+                                    timestamp: DateTime::from(SystemTime::now()),
+                                    system: format!("topic: {} partition: {} offset: {}", topic.topic(), partition.partition(), message.offset),
+                                    level: Level::INFO,
+                                    value: format!("{}:{}", key, value),
+                                })).unwrap();
+                                //     println!("{} {} {}", message.offset, key, value);
+                                let i1 = message.offset + 1;
+                                map1.insert(partition.partition(), i1);
+                            }
+                        }
+                        let vec = map1.iter().map(|k| PartitionOffset { partition: *k.0, offset: *k.1 }).collect();
+                        map.insert(topic.topic().to_string(), vec);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            println!("{:?}", e);
+        }
+    };
+    return map;
+}
+
+fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
+    let mut subs = Vec::with_capacity(string.len() / sub_len);
+    let mut iter = string.chars();
+    let mut pos = 0;
+
+    while pos < string.len() {
+        let mut len = 0;
+        for ch in iter.by_ref().take(sub_len) {
+            len += ch.len_utf8();
+        }
+        subs.push(&string[pos..pos + len]);
+        pos += len;
+    }
+    subs
 }
