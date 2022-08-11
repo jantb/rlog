@@ -170,8 +170,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                         app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
                                     }
                                 } else {
-                                    app.dropped_bottom_messages -= 1;
-                                    app.dropped_top_messages -= 1;
+                                    app.dropped_bottom_messages -= if app.dropped_bottom_messages > 1 { 1 } else { 0 };
+                                    app.dropped_top_messages -= if app.dropped_top_messages > 1 { 1 } else { 0 };
                                 }
                             }
                             KeyCode::Enter => {
@@ -383,7 +383,10 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
                 let spans = s.clone().0;
                 let (f, l) = spans.split_at(spans.len() - 1);
                 let len = max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize;
-                let line = &&l[0].content.split_at(len);
+                if l[0].width() <= len {
+                    return m.clone();
+                }
+                let line = l[0].content.split_at(len);
                 let mut first_part = Vec::from(f);
                 first_part.push(Span::from(line.0.to_string()));
                 let text1 = sub_strings(line.1, chunks[0].width as usize).iter()
@@ -559,7 +562,7 @@ impl<Pod> StatefulList<Pod> {
 
 fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
     if sub_len == 0 {
-        return Vec::new()
+        return Vec::new();
     }
     let mut subs = Vec::with_capacity(string.len() / sub_len);
     let mut iter = string.chars();
