@@ -155,10 +155,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     Search => {
                         match key.code {
                             KeyCode::Up => {
-                                if app.take < app.screen_height {
-                                    continue;
-                                }
-
                                 if app.top_skip == 0 {
                                     app.skip += 1;
                                     app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
