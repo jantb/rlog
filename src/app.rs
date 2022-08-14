@@ -14,10 +14,8 @@ pub struct App {
     pub(crate) show_error: bool,
     pub(crate) stops: Vec<Arc<AtomicBool>>,
     pub(crate) dropped_top_messages: usize,
-    pub(crate) dropped_bottom_messages: usize,
-    pub(crate) top_skip: usize,
-    pub(crate) take: usize,
-    pub(crate) screen_height: usize,
+    pub(crate) last_message_height: usize,
+    pub(crate) last_message_height_set: bool,
     pub(crate) handles: Vec<JoinHandle<()>>,
     pub(crate) pods: StatefulList<Pod>,
     pub(crate) input: Vec<char>,
@@ -42,7 +40,8 @@ impl App {
             show_debug: true,
             show_error: true,
             dropped_top_messages: 0,
-            dropped_bottom_messages: 0,
+            last_message_height: 0,
+            last_message_height_set: false,
             stops: Vec::new(),
             handles: Vec::new(),
             pods: StatefulList::with_items(vec![]),
@@ -57,9 +56,6 @@ impl App {
             window_size: 0,
             tx,
             rx_result,
-            top_skip: 0,
-            take: 0,
-            screen_height: 0
         }
     }
 }
