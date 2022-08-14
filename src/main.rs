@@ -39,10 +39,10 @@ use search_thread::result_message::ResultMessage;
 use crate::app::App;
 use crate::level::Level;
 use crate::message::Message;
-use crate::Mode::{Search, SelectPods};
+use crate::Mode::{Search, SelectPods, SelectTopics};
 use crate::parse_send::parse_and_send;
-use crate::pod::populate_pods::populate_pods;
-use crate::spawn_reader_thread::{clean_up_threads, spawn_reader_thread};
+use crate::pod::populate_pods::{populate_pods, populate_topics};
+use crate::spawn_reader_thread::{clean_up_threads, spawn_reader_thread, spawn_reader_thread_kafka};
 
 mod pod;
 mod search_thread;
@@ -62,10 +62,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     //Command channel for searching etc
     let (tx, rx) = mpsc::channel();
     let (tx_result, rx_result) = mpsc::channel();
-    let mut app = App::default(tx, rx_result);
+    let app = App::default(tx, rx_result);
 
     search_thread::search_thread(rx, tx_result);
-    populate_pods(&mut app);
 
     let res = run_app(&mut terminal, app);
     // restore terminal
@@ -117,7 +116,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
         match event::read()? {
             Event::Key(key) => {
                 match app.mode {
-                    SelectPods => {
+                    SelectPods | SelectTopics => {
                         match key.code {
                             KeyCode::Char(c) => {
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
@@ -128,21 +127,25 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'a' {
                                     app.pods.select_all();
                                 }
-                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' || key.modifiers.contains(KeyModifiers::CONTROL) && c == 'k' {
                                     let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
-                                    app.mode = Search;
+
                                     app.stops.clear();
                                     let stops: Vec<_> = selected_pods.iter().map(|pod| {
                                         let name = pod.name.clone();
                                         let sender = app.tx.clone();
                                         let please_stop = Arc::new(AtomicBool::new(false));
                                         let should_i_stop = please_stop.clone();
-
-                                        return (please_stop, spawn_reader_thread(name, sender, should_i_stop));
+                                        match app.mode {
+                                            SelectPods => { return (please_stop, spawn_reader_thread(name, sender, should_i_stop)); }
+                                            SelectTopics => { return (please_stop, spawn_reader_thread_kafka(name, sender, should_i_stop)); }
+                                            _ => { panic!("Not possible") }
+                                        };
                                     }).collect();
                                     let (x, y): (Vec<_>, Vec<_>) = stops.into_iter().map(|(a, b)| (a, b)).unzip();
                                     app.stops = x;
                                     app.handles = y;
+                                    app.mode = Search;
                                     continue;
                                 }
                             }
@@ -200,6 +203,14 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'l' {
                                     app.wrap = !app.wrap;
+                                    continue;
+                                }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'k' {
+                                    app.mode = SelectTopics;
+                                    clean_up_threads(&mut app);
+
+                                    app.tx.send(CommandMessage::Clear).unwrap();
+                                    populate_topics(&mut app);
                                     continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
@@ -283,6 +294,7 @@ fn filter(app: &mut App) {
 
 enum Mode {
     SelectPods,
+    SelectTopics,
     Search,
 }
 
@@ -304,7 +316,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
         app.tx.send(CommandMessage::SetResultSize(chunks[0].height.into())).unwrap();
     }
     match app.mode {
-        SelectPods => {
+        SelectPods | SelectTopics => {
             let items: Vec<ListItem> = app
                 .pods
                 .items
@@ -319,7 +331,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
                 .collect();
 
             let items = List::new(items)
-                .block(Block::default().borders(Borders::NONE).title("Select pods"))
+                .block(Block::default().borders(Borders::NONE).title("Select"))
                 .highlight_style(
                     Style::default()
                         .bg(Color::LightGreen)

@@ -51,6 +51,48 @@ pub fn spawn_reader_thread(name: String, sender: Sender<CommandMessage>, should_
     });
 }
 
+pub fn spawn_reader_thread_kafka(name: String, sender: Sender<CommandMessage>, should_i_stop: Arc<AtomicBool>) -> JoinHandle<()> {
+    return spawn(move || {
+        let mut child = Command::new("java")
+            .stdout(Stdio::piped())
+            .arg("-jar")
+            .arg("kafka.jar")
+            .arg("topic")
+            .arg(name)
+            .spawn().expect("Unable to start tool");
+        match child.stdout.take() {
+            None => {}
+            Some(l) => {
+                let should_i_stop_thread = should_i_stop.clone();
+                spawn(move || {
+                    let mut reader = BufReader::new(l);
+                    let mut buf = String::new();
+                    while !should_i_stop_thread.load(OtherOrdering::SeqCst) {
+                        match reader.read_line(&mut buf) {
+                            Ok(result) => {
+                                if result == 0 {
+                                    thread::sleep(Duration::from_millis(100));
+                                    continue;
+                                }
+                                parse_and_send(&buf, &sender);
+                                buf.clear()
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                });
+                while !should_i_stop.load(OtherOrdering::SeqCst) {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                match child.kill() {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+            }
+        }
+    });
+}
+
 
 pub fn clean_up_threads(app: &mut App) {
     app.stops.iter().for_each(|s| { s.store(true, OtherOrdering::SeqCst) });
