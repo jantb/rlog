@@ -404,17 +404,15 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     )
         .flatten().collect();
 
-    let messages_height = messages.iter().fold(Text::raw(""), |mut sum, val| {
-        sum.extend(val.clone());
-        sum
-    }).height();
-
     let messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
         sum
     });
+    let messages_height = messages.height();
     let screen_height: i32 = chunks[0].height.into();
+
     let top_skip: usize = max(messages_height as i32 - app.dropped_top_messages as i32 - screen_height, 0).try_into().unwrap();
+
     app.top_skip = top_skip;
     app.take = max(messages_height as i32 - top_skip as i32 - app.dropped_bottom_messages as i32, 0) as usize;
     app.screen_height = screen_height as usize;
