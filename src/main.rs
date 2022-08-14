@@ -198,6 +198,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     app.tx.send(CommandMessage::ToggleError()).unwrap();
                                     continue;
                                 }
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'l' {
+                                    app.wrap = !app.wrap;
+                                    continue;
+                                }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                     app.mode = SelectPods;
                                     clean_up_threads(&mut app);
@@ -333,7 +337,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
 
 fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>) {
     let messages = &app.messages;
-    let messages = map_from_messages_to_text(&chunks, messages);
+    let messages = map_from_messages_to_text(&chunks, messages, &app);
 
     let con_messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
@@ -398,6 +402,8 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
                 true => { Color::Red }
                 false => { Color::Cyan }
             })),
+            Span::styled(format!("{}", ", CTRL-l wrap"), Style::default().fg(Color::Cyan)),
+            Span::styled(format!("{}", ", CTRL-p pods"), Style::default().fg(Color::Cyan)),
         ],
         Style::default());
     let mut text = Text::from(Spans::from(msg));
@@ -417,7 +423,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     )
 }
 
-fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>) -> Vec<Text<'b>> {
+fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>, app: &App) -> Vec<Text<'b>> {
     let mut messages: Vec<_> = messages.iter()
         .map(|m| {
             let mut content = vec![
@@ -429,14 +435,14 @@ fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>)
                     Level::ERROR => { Color::Red }
                     Level::DEBUG => { Color::Blue }
                 }))];
-            if m.value.contains("\n") {
+            if m.value.contains("\n") && app.wrap {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 content.push(Span::raw(n.get(0).unwrap().to_string()));
             } else {
                 content.push(Span::raw(m.value.as_str()));
             }
             let mut text = Text::from(Spans::from(content));
-            if m.value.contains("\n") {
+            if m.value.contains("\n") && app.wrap {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 text.extend(
                     Text::raw(n.get(1).unwrap().to_string()));
@@ -444,33 +450,37 @@ fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>)
             return text;
         }).collect();
     messages.reverse();
-
-    let messages: Vec<_> = messages.into_iter().map(|m| {
-        if m.width() > chunks[0].width as usize {
-            let x1: Vec<_> = m.lines.iter().map(|s| {
-                let spans = s.clone().0;
-                let (f, l) = spans.split_at(spans.len() - 1);
-                let len = max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize;
-                if l[0].width() <= len {
-                    return m.clone();
-                }
-                let line = l[0].content.split_at(len);
-                let mut first_part = Vec::from(f);
-                first_part.push(Span::from(line.0.to_string()));
-                let text1 = sub_strings(line.1, chunks[0].width as usize).iter()
-                    .map(|f| Text::raw(f.to_string())).fold(Text::from(Spans::from(first_part)), |mut sum, f| {
-                    sum.extend(f);
-                    sum
-                });
-                text1
-            }).collect();
-            x1
-        } else {
-            vec![m]
+    let messages: Vec<_> = if app.wrap {
+        let messages: Vec<_> = messages.into_iter().map(|m| {
+            if m.width() > chunks[0].width as usize {
+                let x1: Vec<_> = m.lines.iter().map(|s| {
+                    let spans = s.clone().0;
+                    let (f, l) = spans.split_at(spans.len() - 1);
+                    let len = max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize;
+                    if l[0].width() <= len {
+                        return m.clone();
+                    }
+                    let line = l[0].content.split_at(len);
+                    let mut first_part = Vec::from(f);
+                    first_part.push(Span::from(line.0.to_string()));
+                    let text1 = sub_strings(line.1, chunks[0].width as usize).iter()
+                        .map(|f| Text::raw(f.to_string())).fold(Text::from(Spans::from(first_part)), |mut sum, f| {
+                        sum.extend(f);
+                        sum
+                    });
+                    text1
+                }).collect();
+                x1
+            } else {
+                vec![m]
+            }
         }
-    }
-    )
-        .flatten().collect();
+        )
+            .flatten().collect();
+        messages
+    } else {
+        return messages;
+    };
     messages
 }
 

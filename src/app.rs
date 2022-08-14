@@ -12,6 +12,7 @@ pub struct App {
     pub(crate) show_warn: bool,
     pub(crate) show_debug: bool,
     pub(crate) show_error: bool,
+    pub(crate) wrap: bool,
     pub(crate) stops: Vec<Arc<AtomicBool>>,
     pub(crate) dropped_top_messages: usize,
     pub(crate) last_message_height: usize,
@@ -56,6 +57,7 @@ impl App {
             window_size: 0,
             tx,
             rx_result,
+            wrap: true
         }
     }
 }
