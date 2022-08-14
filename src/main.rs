@@ -22,9 +22,10 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use crossterm::event::{KeyModifiers, MouseEventKind};
-use kafka::client::{FetchPartition, KafkaClient, PartitionOffset};
+use kafka::client::{FetchPartition, KafkaClient, PartitionOffset, SecurityConfig};
 use kafka::consumer::FetchOffset;
 use num_format::{Locale, ToFormattedString};
+use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
 use serde::{Deserialize, Serialize};
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -597,10 +598,23 @@ impl<Pod> StatefulList<Pod> {
 
 
 fn read_kafka(cfg: Vec<String>, sender: Sender<CommandMessage>) {
-    let mut client = KafkaClient::new(cfg);
+    let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
+    builder.set_cipher_list("DEFAULT").unwrap();
+    builder.set_verify(SslVerifyMode::NONE);
+
+    let connector = builder.build();
+
+    let mut client = KafkaClient::new_secure(
+        cfg,
+        SecurityConfig::new(connector),
+    );
+
     match client.load_metadata_all().map_err(|e| e.to_string()) {
         Ok(_) => {}
-        Err(_) => { return }
+        Err(e) => {
+            print!("{:?} {:?}", e, client.hosts());
+            return
+        }
     };
 
     let topics: Vec<_> = client.topics().names().map(|n| n.to_owned()).collect();
