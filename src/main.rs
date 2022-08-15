@@ -131,17 +131,30 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     let selected_pods: Vec<_> = app.pods.selected.iter().map(|pod_index| { &app.pods.items[*pod_index] }).collect();
 
                                     app.stops.clear();
-                                    let stops: Vec<_> = selected_pods.iter().map(|pod| {
-                                        let name = pod.name.clone();
-                                        let sender = app.tx.clone();
-                                        let please_stop = Arc::new(AtomicBool::new(false));
-                                        let should_i_stop = please_stop.clone();
-                                        match app.mode {
-                                            SelectPods => { return (please_stop, spawn_reader_thread(name, sender, should_i_stop)); }
-                                            SelectTopics => { return (please_stop, spawn_reader_thread_kafka(name, sender, should_i_stop)); }
-                                            _ => { panic!("Not possible") }
-                                        };
-                                    }).collect();
+                                    let stops = match app.mode {
+                                        SelectPods => {
+                                            let stops: Vec<_> = selected_pods.iter().map(|pod| {
+                                                let name = pod.name.clone();
+                                                let sender = app.tx.clone();
+                                                let please_stop = Arc::new(AtomicBool::new(false));
+                                                let should_i_stop = please_stop.clone();
+                                                return (please_stop, spawn_reader_thread(name, sender, should_i_stop));
+                                            }).collect();
+                                            stops
+                                        }
+                                        SelectTopics => {
+                                            let pods: Vec<_> = selected_pods.iter().map(|pod| { pod.name.clone() }).collect();
+                                            let name = pods.join(" ");
+                                            let sender = app.tx.clone();
+                                            let please_stop = Arc::new(AtomicBool::new(false));
+                                            let should_i_stop = please_stop.clone();
+                                            let vec: Vec<_> = vec![(please_stop, spawn_reader_thread(name, sender, should_i_stop))];
+                                            vec
+                                        }
+                                        _ => { panic!("Not possible") }
+                                    };
+
+
                                     let (x, y): (Vec<_>, Vec<_>) = stops.into_iter().map(|(a, b)| (a, b)).unzip();
                                     app.stops = x;
                                     app.handles = y;
