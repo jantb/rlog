@@ -20,3 +20,9 @@ pub(crate) struct Metadata {
 pub(crate) struct Status {
     pub(crate) phase: String,
 }
+
+#[derive(Deserialize, Serialize)]
+pub(crate) struct Topics {
+    pub(crate) topics: Vec<String>,
+}
+

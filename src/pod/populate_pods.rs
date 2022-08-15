@@ -21,7 +21,29 @@ pub fn populate_topics(app: &mut App) {
         .arg("list")
         .output()
         .expect("'java -jar kafka-jar list' failed to start");
-    populate(app, &output);
+    populate_kafka(app, &output);
+}
+
+fn populate_kafka(app: &mut App, output: &Output) {
+    app.pods = StatefulList::with_items(vec![]);
+    match output.status.success() {
+        true => {
+            let result: Result<pod::pods::Topics, _> = serde_json::from_str(String::from_utf8_lossy(&output.stdout).to_string().as_str());
+
+            let pods = match result {
+                Ok(l) => { l }
+                Err(err) => {
+                    println!("{}", err.to_string());
+                    return;
+                }
+            };
+            app.pods = StatefulList::with_items(pods.topics.iter()
+                .map(|p| { Pod { name: p.to_string() } }).collect());
+        }
+        false => {
+            println!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
 }
 
 fn populate(app: &mut App, output: &Output) {
