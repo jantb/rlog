@@ -465,14 +465,14 @@ fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>,
             } else {
                 content.push(Span::raw(m.value.as_str()));
             }
-            let mut text = Text::from(Spans::from(content));
+            let mut ret = Vec::new();
+            ret.push(Text::from(Spans::from(content)));
             if m.value.contains("\n") && app.wrap {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
-                text.extend(
-                    Text::raw(n.get(1).unwrap().to_string()));
+                ret.push(Text::raw(n.get(1).unwrap().to_string()));
             }
-            return text;
-        }).collect();
+            return ret;
+        }).flatten().collect();
     messages.reverse();
     let messages: Vec<_> = if app.wrap {
         let messages: Vec<_> = messages.into_iter().map(|m| {
