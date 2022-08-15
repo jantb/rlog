@@ -53,12 +53,11 @@ pub fn search_thread(rx: Receiver<CommandMessage>, tx_result: Sender<ResultMessa
                                 tx_result.send(ResultMessage::Messages(storage
                                     .messages
                                     .iter()
-                                    .enumerate()
-                                    .filter(|x| if storage.filter_not.len() == 0 { true } else { !storage.filter_not.iter().any(|y| y.is_match(x.1.value.as_str())) })
-                                    .filter(|x| storage.filter.is_match(x.1.value.as_str()))
+                                    .filter(|x| storage.filter.is_match(x.value.as_str()))
+                                    .filter(|x| if storage.filter_not.len() == 0 { true } else { !storage.filter_not.iter().any(|y| y.is_match(x.value.as_str())) })
                                     .skip(storage.skip)
-                                    .take(storage.result_size + 1)
-                                    .map(|(_i, m)| { m.clone() }).collect())).unwrap();
+                                    .take(storage.result_size)
+                                    .map(|m| { m.clone() }).collect())).unwrap();
                                 tx_result.send(ResultMessage::Elapsed(now.elapsed())).unwrap();
                                 rx.recv().unwrap()
                             }
