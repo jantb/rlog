@@ -480,9 +480,12 @@ fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>,
                 let x1: Vec<_> = m.lines.iter().map(|s| {
                     let spans = s.clone().0;
                     let (f, l) = spans.split_at(spans.len() - 1);
-                    let len = max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize;
+                    let mut len = max(chunks[0].width as i32 - Text::from(Spans::from(Vec::from(f))).width() as i32, 0) as usize;
                     if l[0].width() <= len {
                         return m.clone();
+                    }
+                    while !l[0].content.is_char_boundary(len) {
+                        len -= 1;
                     }
                     let line = l[0].content.split_at(len);
                     let mut first_part = Vec::from(f);
