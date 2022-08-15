@@ -148,7 +148,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                             let sender = app.tx.clone();
                                             let please_stop = Arc::new(AtomicBool::new(false));
                                             let should_i_stop = please_stop.clone();
-                                            let vec: Vec<_> = vec![(please_stop, spawn_reader_thread(name, sender, should_i_stop))];
+                                            let vec: Vec<_> = vec![(please_stop, spawn_reader_thread_kafka(name, sender, should_i_stop))];
                                             vec
                                         }
                                         _ => { panic!("Not possible") }
