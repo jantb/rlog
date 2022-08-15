@@ -361,8 +361,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
 }
 
 fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>) {
-    let messages = &app.messages;
-    let messages = map_from_messages_to_text(&chunks, messages, &app);
+    let messages = map_from_messages_to_text(&chunks, &app.messages, &app);
 
     let con_messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
