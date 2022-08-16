@@ -363,21 +363,23 @@ fn ui<B: Backend>(f: &mut Frame<B>, mut app: &mut App) {
 fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>) {
     let screen_height = chunks[0].height;
     let mut m = Vec::new();
+
+    let mut line_shifts: usize = 0;
     for x in &app.messages {
-        let lineshifts = x.value.chars().filter(|c| *c == '\n').count();
         m.push(x.clone());
-        if lineshifts > screen_height as usize {
-            break;
+        if app.wrap {
+            line_shifts += x.value.chars().filter(|c| *c == '\n').count() + 1;
+            if line_shifts > screen_height as usize {
+                break;
+            }
         }
     }
 
-    let messages = map_from_messages_to_text(&chunks, &m, &app);
-    let con_messages = messages.iter().take(screen_height as usize).fold(Text::raw(""), |mut sum, val| {
+    let messages = map_from_messages_to_text(&chunks, &m, app.wrap);
+    let con_messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
         sum.extend(val.clone());
         sum
     });
-
-    let messages_height = con_messages.height();
 
 
     if app.last_message_height_set {
@@ -385,6 +387,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
             app.dropped_top_messages -= app.last_message_height;
         }
     }
+    let messages_height = con_messages.height();
     let top_skip: usize = max(messages_height as i32 - screen_height as i32 - app.dropped_top_messages as i32, 0).try_into().unwrap();
 
     if messages_height >= screen_height as usize {
@@ -455,7 +458,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     );
 }
 
-fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>, app: &App) -> Vec<Text<'b>> {
+fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>, wrap: bool) -> Vec<Text<'b>> {
     let messages: Vec<_> = messages.iter()
         .map(|m| {
             let mut content = vec![
@@ -467,21 +470,23 @@ fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>,
                     Level::ERROR => { Color::Red }
                     Level::DEBUG => { Color::Blue }
                 }))];
-            if m.value.contains("\n") && app.wrap {
+            if m.value.contains("\n") && wrap {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 content.push(Span::raw(n.get(0).unwrap().to_string()));
             } else {
-                content.push(Span::raw(m.value.as_str()));
+                let text2 = Text::from(Spans::from(content.clone()));
+                let take: String = m.value.chars().take(chunks[0].width as usize + 10 - text2.width()).collect();
+                content.push(Span::raw(take.clone()));
             }
             let mut text = Text::from(Spans::from(content));
-            if m.value.contains("\n") && app.wrap {
+            if m.value.contains("\n") && wrap {
                 let n: Vec<_> = m.value.splitn(2, |c| c == '\n').collect();
                 text.extend(Text::raw(n.get(1).unwrap().to_string()));
             }
             return text;
         }).rev().collect();
 
-    let messages: Vec<_> = if app.wrap {
+    let messages: Vec<_> = if wrap {
         let messages: Vec<_> = messages.into_iter().map(|m| {
             if m.width() > chunks[0].width as usize {
                 let x1: Vec<_> = m.lines.iter().map(|s| {
