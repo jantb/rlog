@@ -171,11 +171,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     Search => {
                         match key.code {
                             KeyCode::Up => {
-                                app.dropped_top_messages += 1;
+                                app.dropped_bottom_messages += 1;
                             }
                             KeyCode::Down => {
-                                if app.dropped_top_messages > 0 {
-                                    app.dropped_top_messages -= 1;
+                                if app.dropped_bottom_messages > 0 {
+                                    app.dropped_bottom_messages -= 1;
                                 } else {
                                     if app.skip > 0 {
                                         app.skip -= 1;
@@ -185,7 +185,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             KeyCode::Enter => {
                                 app.skip = 0;
-                                app.dropped_top_messages = 0;
+                                app.dropped_bottom_messages = 0;
                                 app.tx.send(CommandMessage::SetSkip(0)).unwrap();
                             }
                             KeyCode::Char(c) => {
@@ -272,8 +272,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                     MouseEventKind::Drag(_) => {}
                     MouseEventKind::Moved => {}
                     MouseEventKind::ScrollDown => {
-                        if app.dropped_top_messages > 0 {
-                            app.dropped_top_messages -= 1;
+                        if app.dropped_bottom_messages > 0 {
+                            app.dropped_bottom_messages -= 1;
                         } else {
                             if app.skip > 0 {
                                 app.skip -= 1;
@@ -282,7 +282,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                         }
                     }
                     MouseEventKind::ScrollUp => {
-                        app.dropped_top_messages += 1;
+                        app.dropped_bottom_messages += 1;
                     }
                 }
             }
@@ -369,7 +369,7 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
         m.push(x.clone());
         if app.wrap {
             line_shifts += x.value.chars().filter(|c| *c == '\n').count() + 1;
-            if line_shifts > screen_height as usize {
+            if line_shifts > screen_height as usize * 2 {
                 break;
             }
         }
@@ -383,15 +383,15 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
 
 
     if app.last_message_height_set {
-        if app.dropped_top_messages > app.last_message_height {
-            app.dropped_top_messages -= app.last_message_height;
+        if app.dropped_bottom_messages >= app.last_message_height {
+            app.dropped_bottom_messages -= app.last_message_height;
         }
     }
     let messages_height = con_messages.height();
-    let top_skip: usize = max(messages_height as i32 - screen_height as i32 - app.dropped_top_messages as i32, 0).try_into().unwrap();
+    let top_skip: usize = max(messages_height as i32 - screen_height as i32 - app.dropped_bottom_messages as i32, 0).try_into().unwrap();
 
     if messages_height >= screen_height as usize {
-        if top_skip == 0 && app.dropped_top_messages > app.last_message_height {
+        if app.dropped_bottom_messages >= messages.last().unwrap().height() {
             app.skip += 1;
             app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
             app.last_message_height = messages.last().unwrap().height();
@@ -403,8 +403,6 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
 
     let x: Vec<_> = con_messages.lines.into_iter().skip(top_skip).take(screen_height as usize).collect();
     let messages = Paragraph::new(Text::from(x)).block(Block::default().borders(Borders::NONE));
-
-    f.render_widget(messages, chunks[0]);
 
     let (msg, style) = (
         vec![
@@ -444,13 +442,15 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let mut text = Text::from(Spans::from(msg));
     text.patch_style(style);
     let help_message = Paragraph::new(text).alignment(Alignment::Right);
-    f.render_widget(help_message, chunks[1]);
+
     let s: String = app.input.iter().collect();
     let input = Paragraph::new(s.as_ref())
         .style(
             Style::default()
         )
         .block(Block::default().borders(Borders::NONE));
+    f.render_widget(messages, chunks[0]);
+    f.render_widget(help_message, chunks[1]);
     f.render_widget(input, chunks[2]);
     f.set_cursor(
         chunks[2].x + app.input_index as u16,
