@@ -180,6 +180,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                     if app.skip > 0 {
                                         app.skip -= 1;
                                         app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                                        app.just_skipped_bottom = true;
                                     }
                                 }
                             }
@@ -278,6 +279,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             if app.skip > 0 {
                                 app.skip -= 1;
                                 app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
+                                app.just_skipped_bottom = true;
                             }
                         }
                     }
@@ -380,9 +382,15 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
         sum.extend(val.clone());
         sum
     });
+    if messages.len() > 0 {
+        app.last_message_height = messages.last().unwrap().height();
+    }
+    if app.just_skipped_bottom {
+        app.dropped_bottom_messages += app.last_message_height - 1;
+        app.just_skipped_bottom = false
+    }
 
-
-    if app.last_message_height_set {
+    if app.just_skipped {
         if app.dropped_bottom_messages >= app.last_message_height {
             app.dropped_bottom_messages -= app.last_message_height;
         }
@@ -394,12 +402,11 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
         if app.dropped_bottom_messages >= messages.last().unwrap().height() {
             app.skip += 1;
             app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
-            app.last_message_height = messages.last().unwrap().height();
-            app.last_message_height_set = true;
+            app.just_skipped = true;
             return render_search(f, app, chunks);
         }
     }
-    app.last_message_height_set = false;
+    app.just_skipped = false;
 
     let x: Vec<_> = con_messages.lines.into_iter().skip(top_skip).take(screen_height as usize).collect();
     let messages = Paragraph::new(Text::from(x)).block(Block::default().borders(Borders::NONE));
