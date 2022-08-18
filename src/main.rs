@@ -367,24 +367,27 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let mut m = Vec::new();
 
     let mut line_shifts: usize = 0;
+    let mut count = 0;
     for x in &app.messages {
         m.push(x.clone());
         if app.wrap {
             line_shifts += x.value.chars().filter(|c| *c == '\n').count() + 1;
-            if line_shifts > screen_height as usize * 2 {
+            if line_shifts > screen_height as usize && count > 0 {
                 break;
             }
         }
+        count += 1;
+    }
+    if m.len() > 0 {
+        let mut mm = Vec::new();
+        let option: Option<&Message> = m.last();
+        mm.push(option.unwrap().clone());
+        app.last_message_height = get_concatinated(&map_from_messages_to_text(&chunks, &mm, app.wrap)).height()
     }
 
     let messages = map_from_messages_to_text(&chunks, &m, app.wrap);
-    let con_messages = messages.iter().fold(Text::raw(""), |mut sum, val| {
-        sum.extend(val.clone());
-        sum
-    });
-    if messages.len() > 0 {
-        app.last_message_height = messages.last().unwrap().height();
-    }
+    let con_messages = get_concatinated(&messages);
+
     if app.just_skipped_bottom {
         app.dropped_bottom_messages += app.last_message_height - 1;
         app.just_skipped_bottom = false
@@ -397,9 +400,8 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     }
     let messages_height = con_messages.height();
     let top_skip: usize = max(messages_height as i32 - screen_height as i32 - app.dropped_bottom_messages as i32, 0).try_into().unwrap();
-
     if messages_height >= screen_height as usize {
-        if app.dropped_bottom_messages >= messages.last().unwrap().height() {
+        if app.dropped_bottom_messages >= app.last_message_height {
             app.skip += 1;
             app.tx.send(CommandMessage::SetSkip(app.skip)).unwrap();
             app.just_skipped = true;
@@ -463,6 +465,13 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
         chunks[2].x + app.input_index as u16,
         chunks[2].y,
     );
+}
+
+fn get_concatinated<'a>(messages: &'a Vec<Text>) -> Text<'a> {
+    messages.iter().fold(Text::raw(""), |mut sum, val| {
+        sum.extend(val.clone());
+        sum
+    })
 }
 
 fn map_from_messages_to_text<'b>(chunks: &Vec<Rect>, messages: &'b Vec<Message>, wrap: bool) -> Vec<Text<'b>> {
