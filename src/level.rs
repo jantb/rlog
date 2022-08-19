@@ -1,7 +1,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(PartialEq, Eq, PartialOrd, Copy, Clone, Deserialize, Serialize)]
 pub enum Level {
     INFO,
     WARN,

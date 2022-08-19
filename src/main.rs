@@ -1,16 +1,6 @@
 extern crate core;
 
-use std::{
-    cmp::max,
-    collections::HashSet,
-    error::Error,
-    io,
-    sync::Arc,
-    sync::atomic::AtomicBool,
-    sync::atomic::Ordering as OtherOrdering,
-    sync::mpsc,
-    time::Duration,
-};
+use std::{cmp::max, collections::HashSet, error::Error, fs, io, sync::Arc, sync::atomic::AtomicBool, sync::atomic::Ordering as OtherOrdering, sync::mpsc, time::Duration};
 
 use bytesize::ByteSize;
 use crossterm::{
@@ -190,6 +180,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                                 app.tx.send(CommandMessage::SetSkip(0)).unwrap();
                             }
                             KeyCode::Char(c) => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'd' {
+                                    let result = serde_json::to_string(&app.messages).unwrap();
+                                    fs::write("dump", result).expect("Unable to write file");
+                                    continue;
+                                }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
                                     clean_up_threads(&mut app);
                                     app.tx.send(CommandMessage::Exit).unwrap();
@@ -367,16 +362,14 @@ fn render_search<B: Backend>(f: &mut Frame<B>, app: &mut App, chunks: Vec<Rect>)
     let mut m = Vec::new();
 
     let mut line_shifts: usize = 0;
-    let mut count = 0;
     for x in &app.messages {
         m.push(x.clone());
         if app.wrap {
             line_shifts += x.value.chars().filter(|c| *c == '\n').count() + 1;
-            if line_shifts > screen_height as usize && count > 0 {
+            if line_shifts > screen_height as usize + app.last_message_height {
                 break;
             }
         }
-        count += 1;
     }
     if m.len() > 0 {
         let mut mm = Vec::new();
