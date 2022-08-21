@@ -87,6 +87,17 @@ impl Messages {
         self.size += m.system.len() as u64;
         self.size += mem::size_of_val(&m.timestamp) as u64;
         let key = m.system.to_string();
-        self.map.entry(format!("{} {}", m.level.to_string(), key)).or_insert_with(|| VecDeque::new()).push_front(m);
+
+        let entries = self.map.entry(format!("{} {}", m.level.to_string(), key)).or_insert_with(|| VecDeque::new());
+        match entries.front() {
+            None => {}
+            Some(front_message) => {
+                match m.timestamp >= front_message.timestamp {
+                    true => {}
+                    false => { panic!("Tried to insert out out order message") }
+                }
+            }
+        }
+        entries.push_front(m);
     }
 }

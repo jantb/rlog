@@ -181,8 +181,10 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                             }
                             KeyCode::Char(c) => {
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'd' {
-                                    let result = serde_json::to_string(&app.messages).unwrap();
-                                    fs::write("dump", result).expect("Unable to write file");
+                                    let mut dump = app.messages.clone();
+                                    dump.reverse();
+                                    let result = serde_json::to_string(&dump).unwrap();
+                                    fs::write("dump.json", result).expect("Unable to write file");
                                     continue;
                                 }
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
