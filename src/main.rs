@@ -3,11 +3,7 @@ extern crate core;
 use std::{cmp::max, collections::HashSet, error::Error, fs, io, sync::Arc, sync::atomic::AtomicBool, sync::atomic::Ordering as OtherOrdering, sync::mpsc, time::Duration};
 
 use bytesize::ByteSize;
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::{event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode}, execute, terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
 use crossterm::event::{KeyModifiers, MouseEventKind};
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
@@ -73,8 +69,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
-    let mut changed = false;
+    let mut changed = true;
     loop {
+        if changed {
+            terminal.draw(|f| ui(f, &mut app))?;
+            changed = false;
+        }
         while let Ok(result_message) = app.rx_result.try_recv() {
             changed = true;
             match result_message {
@@ -95,11 +95,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 }
             }
         }
-        if changed {
-            changed = false;
-            terminal.draw(|f| ui(f, &mut app))?;
-        }
-        if !event::poll(Duration::from_millis(8)).unwrap() {
+
+        if !event::poll(Duration::from_millis(50)).unwrap() {
             continue;
         }
         changed = true;
