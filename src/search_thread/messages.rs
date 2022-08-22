@@ -90,14 +90,16 @@ impl Messages {
 
         let entries = self.map.entry(format!("{} {}", m.level.to_string(), key)).or_insert_with(|| VecDeque::new());
         match entries.front() {
-            None => {}
+            None => { entries.push_front(m); }
             Some(front_message) => {
                 match m.timestamp >= front_message.timestamp {
-                    true => {}
-                    false => { panic!("Tried to insert out out order message") }
+                    true => { entries.push_front(m); }
+                    false => {
+                        let idx = entries.partition_point(|x| x > &m);
+                        entries.insert(idx, m);
+                    }
                 }
             }
         }
-        entries.push_front(m);
     }
 }
